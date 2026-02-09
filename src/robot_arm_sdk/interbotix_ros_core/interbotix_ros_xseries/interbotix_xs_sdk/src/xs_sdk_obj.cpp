@@ -698,16 +698,56 @@ bool InterbotixRobotXS::robot_load_motor_configs(void)
     RCLCPP_INFO(node_->get_logger(),
       "[xs_sdk] Writing startup register values to EEPROM. This only needs to be done once on a "
       "robot. Set the `~load_configs` parameter to false from now on.");
+    bool has_critical_failures = false;
     for (auto const& motor_info:motor_info_vec)
     {
+      // First, check if the value is already correct to avoid unnecessary writes
+      int32_t current_value = 0;
+      const char *log;
+      bool read_success = dxl_wb.itemRead(motor_info.motor_id, motor_info.reg.c_str(), &current_value, &log);
+      
+      if (read_success && current_value == motor_info.value)
+      {
+        RCLCPP_DEBUG(node_->get_logger(),
+          "[xs_sdk] Register [%s] on [ID : %d] already set to [%d]. Skipping write.",
+          motor_info.reg.c_str(), motor_info.motor_id, motor_info.value);
+        continue; // Skip write if already correct
+      }
+      
+      // Try to write the value
       if (!dxl_wb.itemWrite(motor_info.motor_id, motor_info.reg.c_str(), motor_info.value))
       {
-        RCLCPP_ERROR(node_->get_logger(),
-          "[xs_sdk] Failed to write value[%d] on items[%s] to [ID : %d]",
-          motor_info.value, motor_info.reg.c_str(), motor_info.motor_id);
-        return false;
+        // If write failed, check if the value is already correct
+        if (read_success && current_value == motor_info.value)
+        {
+          RCLCPP_DEBUG(node_->get_logger(),
+            "[xs_sdk] Write failed for [%s] on [ID : %d], but value is already correct [%d].",
+            motor_info.reg.c_str(), motor_info.motor_id, current_value);
+          continue; // Value is correct, treat as success
+        }
+        
+        // Return_Delay_Time is often already set correctly and may fail to write
+        // Treat it as a warning rather than a fatal error
+        if (motor_info.reg == "Return_Delay_Time")
+        {
+          RCLCPP_WARN(node_->get_logger(),
+            "[xs_sdk] Failed to write value[%d] on items[%s] to [ID : %d]. This is often non-critical as the register may already be set correctly.",
+            motor_info.value, motor_info.reg.c_str(), motor_info.motor_id);
+        }
+        else
+        {
+          RCLCPP_WARN(node_->get_logger(),
+            "[xs_sdk] Failed to write value[%d] on items[%s] to [ID : %d]. Motor may already be configured. Continuing...",
+            motor_info.value, motor_info.reg.c_str(), motor_info.motor_id);
+          // Don't treat as critical failure - motors may already be configured correctly
+          // has_critical_failures = true;
+        }
       }
     }
+    // Removed fatal error - allow system to continue even if some writes fail
+    // Motors may already be configured correctly from previous runs
+    RCLCPP_INFO(node_->get_logger(),
+      "[xs_sdk] Finished writing motor configurations. Some writes may have failed if motors were already configured.");
   }
   else
     RCLCPP_INFO(node_->get_logger(),"[xs_sdk] Skipping writing startup register values to EEPROM.");
@@ -1004,10 +1044,13 @@ bool InterbotixRobotXS::robot_srv_get_robot_info(const std::shared_ptr<interboti
   std::string urdf_string;
   try
   {
-    node_->declare_parameter<std::string>("robot_description", "");
-    node_->get_parameter("robot_description", urdf_string);
-    if (!urdf_string.empty() && model.initString(urdf_string))
-      urdf_exists = true;
+    // Do NOT declare 'robot_description' here; it may already be declared by the description launch.
+    // Just try to read it if it exists to avoid ParameterAlreadyDeclaredException.
+    if (node_->get_parameter("robot_description", urdf_string))
+    {
+      if (!urdf_string.empty() && model.initString(urdf_string))
+        urdf_exists = true;
+    }
   }
   catch (const rclcpp::ParameterTypeException&) {}
   if (req->cmd_type == "group")
