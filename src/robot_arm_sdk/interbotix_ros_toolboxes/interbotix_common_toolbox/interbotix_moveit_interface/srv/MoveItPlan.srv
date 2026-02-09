@@ -1,0 +1,7 @@
+# Send commands to the moveit_plan server
+# cmd: 1=CMD_PLAN_POSE, 2=CMD_PLAN_POSITION, 3=CMD_PLAN_ORIENTATION, 4=CMD_EXECUTE
+int8 cmd
+geometry_msgs/Pose ee_pose
+---
+std_msgs/String msg
+bool success

@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>interbotix_perception_modules</name>
+  <version>0.0.0</version>
+  <description>Interbotix perception modules (pointcloud filter, AprilTag, etc.)</description>
+  <maintainer email="trsupport@trossenrobotics.com">Luke Schmitt</maintainer>
+  <license>BSD</license>
+  <author email="trsupport@trossenrobotics.com">Solomon Wiznitzer</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+  <buildtool_depend>python3-setuptools</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>pcl_conversions</depend>
+  <depend>interbotix_xs_msgs</depend>
+  <depend>interbotix_common_modules</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <exec_depend>python_qt_binding</exec_depend>
+
+  <member_of_group>rosidl_interface_packages</member_of_group>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

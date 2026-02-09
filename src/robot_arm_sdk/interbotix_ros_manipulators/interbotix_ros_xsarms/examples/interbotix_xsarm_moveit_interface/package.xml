@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>interbotix_xsarm_moveit_interface</name>
+  <version>0.0.0</version>
+  <description>MoveIt interface for X-Series arms</description>
+  <maintainer email="trsupport@trossenrobotics.com">Solomon Wiznitzer</maintainer>
+  <license>BSD</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>interbotix_xsarm_moveit</depend>
+  <depend>interbotix_moveit_interface</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.8)
+project(interbotix_xsarm_diagnostic_tool)
+find_package(ament_cmake REQUIRED)
+install(DIRECTORY config launch data bag DESTINATION share/${PROJECT_NAME})
+install(PROGRAMS scripts/bag2csv.py DESTINATION lib/${PROJECT_NAME})
+ament_package()
