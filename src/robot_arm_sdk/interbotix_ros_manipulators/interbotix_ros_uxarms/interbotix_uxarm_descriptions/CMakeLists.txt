@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.8)
+project(interbotix_uxarm_descriptions)
+find_package(ament_cmake REQUIRED)
+install(DIRECTORY launch meshes rviz urdf images DESTINATION share/${PROJECT_NAME})
+ament_package()

@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>interbotix_xsarm_puppet</name>
+  <version>0.0.0</version>
+  <description>Puppet/teleop demo for X-Series arms</description>
+  <maintainer email="trsupport@trossenrobotics.com">Solomon Wiznitzer</maintainer>
+  <license>BSD</license>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>interbotix_xs_msgs</depend>
+  <depend>interbotix_xsarm_control</depend>
+  <depend>rosbag2</depend>
+  <depend>tf2_ros</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <export><build_type>ament_cmake</build_type></export>
+</package>

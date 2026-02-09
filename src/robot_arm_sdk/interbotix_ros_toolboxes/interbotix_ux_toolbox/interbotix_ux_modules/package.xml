@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>interbotix_ux_modules</name>
+  <version>0.0.0</version>
+  <description>The interbotix_ux_modules package (ROS 2)</description>
+  <maintainer email="trsupport@trossenrobotics.com">Luke Schmitt</maintainer>
+  <license>BSD</license>
+  <author email="trsupport@trossenrobotics.com">Solomon Wiznitzer</author>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <buildtool_depend>python3-setuptools</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>xarm_api</depend>
+  <depend>xarm_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <exec_depend>interbotix_common_modules</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>
