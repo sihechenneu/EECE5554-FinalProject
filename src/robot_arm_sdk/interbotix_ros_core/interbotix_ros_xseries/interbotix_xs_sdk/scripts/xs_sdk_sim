@@ -1,0 +1,457 @@
+#!/usr/bin/env python3
+# Port of xs_sdk_sim to ROS 2 (rclpy). Simulates the xs_sdk driver for use in RViz without hardware.
+
+import math
+import sys
+import threading
+import time
+import xml.etree.ElementTree as ET
+
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import JointState
+from interbotix_xs_msgs.msg import (
+    JointGroupCommand,
+    JointSingleCommand,
+    JointTrajectoryCommand,
+)
+from interbotix_xs_msgs.srv import (
+    TorqueEnable,
+    Reboot,
+    RobotInfo,
+    OperatingModes,
+    MotorGains,
+    RegisterValues,
+)
+import yaml
+
+
+def _parse_urdf_joint_limits(urdf_string):
+    """Parse URDF XML string and return dict joint_name -> (lower, upper, velocity)."""
+    limits = {}
+    if not urdf_string or not urdf_string.strip():
+        return limits
+    try:
+        root = ET.fromstring(urdf_string)
+        for joint in root.findall(".//joint"):
+            name = joint.get("name")
+            limit_el = joint.find("limit")
+            if name is not None and limit_el is not None:
+                lower = float(limit_el.get("lower", -3.14159))
+                upper = float(limit_el.get("upper", 3.14159))
+                velocity = float(limit_el.get("velocity", 1.0))
+                limits[name] = (lower, upper, velocity)
+    except ET.ParseError:
+        pass
+    return limits
+
+
+class InterbotixRobotXS(Node):
+    """Simulates InterbotixRobotXS for use with RViz and the same ROS 2 interfaces as the real driver."""
+
+    def __init__(self):
+        super().__init__("xs_sdk_sim")
+        self.rd_limits = {}  # joint name -> (lower, upper, velocity)
+        self.timer_hz = 20
+        self.js_topic = None
+        self.move_thresh = 300
+        self.execute_joint_traj = False
+        self.joint_states = JointState()
+        self.cmd_mutex = threading.Lock()
+        self.commands = {}
+        self.sleep_map = {}
+        self.group_map = {}
+        self.motor_map = {}
+        self.gripper_map = {}
+        self.js_index_map = {}
+        self.gripper_order = []
+
+        self._get_urdf_info()
+        if not self._robot_get_motor_configs():
+            raise RuntimeError("Failed to load motor configs")
+
+        self._declare_services()
+        self._declare_publishers_subscribers()
+        self.timer = self.create_timer(1.0 / self.timer_hz, self._robot_update_joint_states)
+
+    def _get_urdf_info(self):
+        self.declare_parameter("robot_description", "")
+        urdf_str = self.get_parameter("robot_description").get_parameter_value().string_value
+        self.rd_limits = _parse_urdf_joint_limits(urdf_str)
+
+    def _robot_get_motor_configs(self):
+        self.declare_parameter("motor_configs", "")
+        self.declare_parameter("mode_configs", "")
+        self.declare_parameter("load_configs", "true")  # launch often passes string
+        motor_configs_filepath = self.get_parameter("motor_configs").get_parameter_value().string_value
+        mode_configs_filepath = self.get_parameter("mode_configs").get_parameter_value().string_value
+
+        try:
+            with open(motor_configs_filepath, "r") as f:
+                motor_configs = yaml.safe_load(f)
+        except OSError:
+            self.get_logger().error(
+                "[xs_sdk] Motor Config file at '%s' was not found. Shutting down..." % motor_configs_filepath
+            )
+            return False
+        self.get_logger().info("[xs_sdk] Loaded motor configs from '%s'." % motor_configs_filepath)
+
+        try:
+            with open(mode_configs_filepath, "r") as f:
+                mode_configs = yaml.safe_load(f)
+        except OSError:
+            mode_configs = {}
+            self.get_logger().info("[xs_sdk] Mode Config file was not found.")
+        self.get_logger().info("[xs_sdk] Loaded mode configs from '%s'." % mode_configs_filepath)
+
+        joint_order = motor_configs["joint_order"]
+        sleep_positions = motor_configs["sleep_positions"]
+        if len(joint_order) != len(sleep_positions):
+            self.get_logger().fatal(
+                "[xs_sdk] joint_order length (%d) != sleep_positions length (%d)."
+                % (len(joint_order), len(sleep_positions))
+            )
+            return False
+
+        self.js_topic = motor_configs["joint_state_publisher"]["topic_name"]
+        motor_groups = motor_configs.get("groups", {})
+        grippers = motor_configs.get("grippers", {})
+        motors = motor_configs["motors"]
+        mode_groups = mode_configs.get("groups", {})
+        singles = mode_configs.get("singles", {})
+
+        for gpr, items in grippers.items():
+            self.gripper_map[gpr] = {
+                "horn_radius": items["horn_radius"],
+                "arm_length": items["arm_length"],
+                "left_finger": items["left_finger"],
+                "right_finger": items["right_finger"],
+            }
+
+        for i, jname in enumerate(joint_order):
+            self.sleep_map[jname] = sleep_positions[i]
+            if jname in self.gripper_map:
+                self.gripper_order.append(jname)
+                self.gripper_map[jname]["js_index"] = i
+            self.js_index_map[jname] = i
+            self.joint_states.name.append(jname)
+            self.joint_states.position.append(sleep_positions[i])
+
+        for gpr in self.gripper_order:
+            for finger_key, finger_name in [("left_finger", "left_finger"), ("right_finger", "right_finger")]:
+                fngr = self.gripper_map[gpr][finger_name]
+                lin_dist = self._robot_convert_angular_position_to_linear(gpr, self.sleep_map[gpr])
+                dist = lin_dist if finger_key == "left_finger" else -lin_dist
+                self.js_index_map[fngr] = len(self.js_index_map)
+                self.joint_states.name.append(fngr)
+                self.joint_states.position.append(dist)
+
+        for name in joint_order:
+            self.motor_map[name] = {"motor_id": motors[name]["ID"]}
+
+        groups = list(motor_groups)
+        groups.insert(0, "all")
+        motor_groups["all"] = joint_order
+        mode_groups["all"] = {}
+        for grp in groups:
+            joint_names = motor_groups[grp]
+            self.group_map[grp] = {
+                "joint_names": joint_names,
+                "joint_num": len(joint_names),
+                "joint_ids": [self.motor_map[n]["motor_id"] for n in joint_names],
+            }
+            mode = mode_groups[grp].get("operating_mode", "position")
+            profile_type = mode_groups[grp].get("profile_type", "velocity")
+            profile_velocity = mode_groups[grp].get("profile_velocity", 0)
+            profile_acceleration = mode_groups[grp].get("profile_acceleration", 0)
+            self._robot_set_operating_modes(
+                "group", grp, mode, profile_type, profile_velocity, profile_acceleration
+            )
+            self.group_map[grp]["mode"] = mode
+            self.group_map[grp]["profile_type"] = profile_type
+
+        for sgl, info in singles.items():
+            mode = info.get("operating_mode", "position")
+            profile_type = info.get("profile_type", "velocity")
+            profile_velocity = info.get("profile_velocity", 0)
+            profile_acceleration = info.get("profile_acceleration", 0)
+            self._robot_set_joint_operating_mode(
+                sgl, mode, profile_type, profile_velocity, profile_acceleration
+            )
+
+        return True
+
+    def _robot_set_operating_modes(self, cmd_type, name, mode, profile_type, profile_velocity, profile_acceleration):
+        if cmd_type == "group" and name in self.group_map:
+            for joint_name in self.group_map[name]["joint_names"]:
+                self._robot_set_joint_operating_mode(
+                    joint_name, mode, profile_type, profile_velocity, profile_acceleration
+                )
+            self.group_map[name]["mode"] = mode
+            self.group_map[name]["profile_type"] = profile_type
+            self.get_logger().info("[xs_sdk] The '%s' group operating mode set to %s." % (name, mode))
+        elif cmd_type == "single" and name in self.motor_map:
+            self._robot_set_joint_operating_mode(name, mode, profile_type, profile_velocity, profile_acceleration)
+            self.get_logger().info("[xs_sdk] The '%s' joint operating mode set to %s." % (name, mode))
+        elif (cmd_type == "group" and name not in self.group_map) or (cmd_type == "single" and name not in self.motor_map):
+            self.get_logger().info("[xs_sdk] The '%s' joint/group does not exist." % name)
+        else:
+            self.get_logger().error("[xs_sdk] Invalid cmd_type for set_operating_modes.")
+
+    def _robot_set_joint_operating_mode(self, name, mode, profile_type, profile_velocity, profile_acceleration):
+        self.motor_map[name]["mode"] = mode
+        self.motor_map[name]["profile_type"] = profile_type
+        self.motor_map[name]["profile_velocity"] = profile_velocity
+        self.motor_map[name]["profile_acceleration"] = profile_acceleration
+
+    def _robot_write_commands(self, name, commands):
+        joints = self.group_map[name]["joint_names"]
+        for x in range(len(joints)):
+            self._robot_write_joint_command(joints[x], commands[x])
+
+    def _robot_write_joint_command(self, name, command):
+        motor = self.motor_map[name]
+        mode = motor["mode"]
+        prof_vel = motor["profile_velocity"]
+        with self.cmd_mutex:
+            if "position" in mode and prof_vel > self.move_thresh:
+                num_itr = int(round(prof_vel / 1000.0 * self.timer_hz + 1))
+                self.commands[name] = list(
+                    np.linspace(
+                        command,
+                        self.joint_states.position[self.js_index_map[name]],
+                        num_itr,
+                    )
+                )
+            else:
+                self.commands[name] = command
+
+    def _robot_convert_linear_position_to_radian(self, name, linear_position):
+        half_dist = linear_position / 2.0
+        arm_length = self.gripper_map[name]["arm_length"]
+        horn_radius = self.gripper_map[name]["horn_radius"]
+        return math.pi / 2.0 - math.acos(
+            (horn_radius**2 + half_dist**2 - arm_length**2) / (2 * horn_radius * half_dist)
+        )
+
+    def _robot_convert_angular_position_to_linear(self, name, angular_position):
+        arm_length = self.gripper_map[name]["arm_length"]
+        horn_radius = self.gripper_map[name]["horn_radius"]
+        a1 = horn_radius * math.sin(angular_position)
+        c = math.sqrt(horn_radius**2 - a1**2)
+        a2 = math.sqrt(arm_length**2 - c**2)
+        return a1 + a2
+
+    def _declare_services(self):
+        self.srv_torque_enable = self.create_service(
+            TorqueEnable, "torque_enable", self._robot_srv_torque_enable
+        )
+        self.srv_reboot = self.create_service(Reboot, "reboot_motors", self._robot_srv_reboot_motors)
+        self.srv_get_robot_info = self.create_service(
+            RobotInfo, "get_robot_info", self._robot_srv_get_robot_info
+        )
+        self.srv_set_operating_modes = self.create_service(
+            OperatingModes, "set_operating_modes", self._robot_srv_set_operating_modes
+        )
+        self.srv_set_motor_pid_gains = self.create_service(
+            MotorGains, "set_motor_pid_gains", self._robot_srv_set_motor_pid_gains
+        )
+        self.srv_set_motor_registers = self.create_service(
+            RegisterValues, "set_motor_registers", self._robot_srv_set_motor_registers
+        )
+        self.srv_get_motor_registers = self.create_service(
+            RegisterValues, "get_motor_registers", self._robot_srv_get_motor_registers
+        )
+
+    def _declare_publishers_subscribers(self):
+        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST)
+        self.pub_joint_states = self.create_publisher(JointState, self.js_topic, qos)
+        self.create_subscription(
+            JointGroupCommand, "commands/joint_group", self._robot_sub_command_group, qos
+        )
+        self.create_subscription(
+            JointSingleCommand, "commands/joint_single", self._robot_sub_command_single, qos
+        )
+        self.create_subscription(
+            JointTrajectoryCommand, "commands/joint_trajectory", self._robot_sub_command_traj, qos
+        )
+
+    def _robot_sub_command_group(self, msg):
+        self._robot_write_commands(msg.name, list(msg.cmd))
+
+    def _robot_sub_command_single(self, msg):
+        self._robot_write_joint_command(msg.name, msg.cmd)
+
+    def _robot_sub_command_traj(self, msg):
+        if self.execute_joint_traj:
+            self.get_logger().info("[xs_sdk] Trajectory rejected since joints are still moving.")
+            return
+        if len(msg.traj.points) < 2:
+            self.get_logger().info("[xs_sdk] Trajectory has fewer than 2 points. Aborting...")
+            return
+        mode = None
+        joint_names = []
+        if msg.cmd_type == "group":
+            mode = self.group_map[msg.name]["mode"]
+            joint_names = self.group_map[msg.name]["joint_names"]
+        elif msg.cmd_type == "single":
+            mode = self.motor_map[msg.name]["mode"]
+            joint_names.append(msg.name)
+
+        self.execute_joint_traj = True
+        points = msg.traj.points
+        time_start = self.get_clock().now()
+        for x in range(1, len(points)):
+            if msg.cmd_type == "group":
+                if "position" in mode:
+                    self._robot_write_commands(msg.name, list(points[x].positions))
+                elif mode == "velocity":
+                    self._robot_write_commands(msg.name, list(points[x].velocities))
+                elif mode in ("pwm", "current"):
+                    self._robot_write_commands(msg.name, list(points[x].effort))
+            elif msg.cmd_type == "single":
+                if "position" in mode:
+                    self._robot_write_joint_command(msg.name, points[x].positions[0])
+                elif mode == "velocity":
+                    self._robot_write_joint_command(msg.name, points[x].velocities[0])
+                elif mode in ("pwm", "current"):
+                    self._robot_write_joint_command(msg.name, points[x].effort[0])
+            if x < len(points) - 1:
+                desired_t = points[x].time_from_start.sec + points[x].time_from_start.nanosec * 1e-9
+                elapsed = (self.get_clock().now() - time_start).nanoseconds * 1e-9
+                period_sec = desired_t - elapsed
+                if period_sec > 0:
+                    time.sleep(period_sec)
+        self.execute_joint_traj = False
+
+    def _robot_srv_torque_enable(self, req, res):
+        return res
+
+    def _robot_srv_reboot_motors(self, req, res):
+        return res
+
+    def _robot_srv_get_robot_info(self, req, res):
+        joint_names = []
+        if req.cmd_type == "group":
+            joint_names = self.group_map[req.name]["joint_names"]
+            res.profile_type = self.group_map[req.name]["profile_type"]
+            res.mode = self.group_map[req.name]["mode"]
+        elif req.cmd_type == "single":
+            joint_names.append(req.name)
+            res.profile_type = self.motor_map[req.name]["profile_type"]
+            res.mode = self.motor_map[req.name]["mode"]
+
+        res.num_joints = len(joint_names)
+        for name in joint_names:
+            res.joint_ids.append(self.motor_map[name]["motor_id"])
+            if name in self.gripper_map:
+                res.joint_sleep_positions.append(self._robot_convert_angular_position_to_linear(name, 0))
+                name = self.gripper_map[name]["left_finger"]
+                res.joint_names.append(name)
+            else:
+                res.joint_sleep_positions.append(self.sleep_map[name])
+                res.joint_names.append(name)
+            res.joint_state_indices.append(self.js_index_map[name])
+            limits = self.rd_limits.get(name, (-3.14159, 3.14159, 1.0))
+            res.joint_lower_limits.append(limits[0])
+            res.joint_upper_limits.append(limits[1])
+            res.joint_velocity_limits.append(limits[2])
+        if req.name != "all":
+            res.name.append(req.name)
+        else:
+            for key in self.group_map:
+                res.name.append(key)
+        return res
+
+    def _robot_srv_set_operating_modes(self, req, res):
+        self._robot_set_operating_modes(
+            req.cmd_type, req.name, req.mode, req.profile_type,
+            req.profile_velocity, req.profile_acceleration,
+        )
+        return res
+
+    def _robot_srv_set_motor_pid_gains(self, req, res):
+        return res
+
+    def _robot_srv_set_motor_registers(self, req, res):
+        if req.reg == "Profile_Velocity" or req.reg == "Profile_Acceleration":
+            reg = "profile_velocity" if req.reg == "Profile_Velocity" else "profile_acceleration"
+            if req.cmd_type == "group":
+                self.group_map[req.name][reg] = req.value
+                for joint in self.group_map[req.name]["joint_names"]:
+                    self.motor_map[joint][reg] = req.value
+            elif req.cmd_type == "single":
+                self.motor_map[req.name][reg] = req.value
+        return res
+
+    def _robot_srv_get_motor_registers(self, req, res):
+        if req.reg == "Profile_Velocity" or req.reg == "Profile_Acceleration":
+            reg = "profile_velocity" if req.reg == "Profile_Velocity" else "profile_acceleration"
+            if req.cmd_type == "group":
+                for joint in self.group_map[req.name]["joint_names"]:
+                    res.values.append(self.motor_map[joint][reg])
+            elif req.cmd_type == "single":
+                res.values.append(self.motor_map[req.name][reg])
+        return res
+
+    def _robot_update_joint_states(self):
+        with self.cmd_mutex:
+            for joint in list(self.commands.keys()):
+                mode = self.motor_map[joint]["mode"]
+                if "position" in mode:
+                    if isinstance(self.commands[joint], list):
+                        value = self.commands[joint].pop()
+                        if len(self.commands[joint]) == 0:
+                            del self.commands[joint]
+                    else:
+                        value = self.commands[joint]
+                        del self.commands[joint]
+
+                    if joint in self.gripper_map:
+                        gpr = self.gripper_map[joint]
+                        if mode == "linear_position":
+                            angle = self._robot_convert_linear_position_to_radian(joint, value)
+                            self.joint_states.position[self.js_index_map[joint]] = angle
+                            self.joint_states.position[self.js_index_map[gpr["left_finger"]]] = value / 2.0
+                            self.joint_states.position[self.js_index_map[gpr["right_finger"]]] = -value / 2.0
+                        else:
+                            lin_pos = self._robot_convert_angular_position_to_linear(joint, value)
+                            self.joint_states.position[self.js_index_map[joint]] = value
+                            self.joint_states.position[self.js_index_map[gpr["left_finger"]]] = lin_pos
+                            self.joint_states.position[self.js_index_map[gpr["right_finger"]]] = -lin_pos
+                    else:
+                        self.joint_states.position[self.js_index_map[joint]] = value
+                else:
+                    value = self.commands[joint]
+                    if value == 0:
+                        del self.commands[joint]
+                    else:
+                        new_val = value / self.timer_hz if mode == "velocity" else value / 2000.0
+                        self.joint_states.position[self.js_index_map[joint]] += new_val
+                        if joint in self.gripper_map:
+                            gpr = self.gripper_map[joint]
+                            angle = self.joint_states.position[self.js_index_map[joint]]
+                            lin_pos = self._robot_convert_angular_position_to_linear(joint, angle)
+                            self.joint_states.position[self.js_index_map[gpr["left_finger"]]] = lin_pos
+                            self.joint_states.position[self.js_index_map[gpr["right_finger"]]] = -lin_pos
+
+            self.joint_states.header.stamp = self.get_clock().now().to_msg()
+            self.pub_joint_states.publish(self.joint_states)
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    try:
+        node = InterbotixRobotXS()
+        rclpy.spin(node)
+    except RuntimeError as e:
+        sys.exit(1)
+    finally:
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
