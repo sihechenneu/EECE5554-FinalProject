@@ -2,8 +2,9 @@ import json, os, shutil, random, subprocess, sys
 from pathlib import Path
 from tqdm import tqdm
 
-DATASET_ROOT = Path(".") / "../../datasets/taco_yolo"
-TACO_REPO    = Path(".") / "../../TACO"
+_WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
+DATASET_ROOT = _WORKSPACE_ROOT / "datasets" / "taco_yolo"
+TACO_REPO    = _WORKSPACE_ROOT / "TACO"
 VAL_RATIO    = 0.2
 SEED         = 42
 
@@ -80,7 +81,7 @@ def create_yolo_dataset(labels, images_meta, class_names):
 
 
 def main():
-    clone_and_download()
+    # clone_and_download()
     all_labels, all_images = {}, []
     for ann_file in [TACO_REPO / "data" / "annotations.json",
                      TACO_REPO / "data" / "annotations_unofficial.json"]:

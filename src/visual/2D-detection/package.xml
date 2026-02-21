@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>trash_detection_2d</name>
+  <version>0.0.1</version>
+  <description>YOLO trash detection: CLI or ROS2 node (Image -> Detection2DArray).</description>
+  <license>BSD</license>
+
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>vision_msgs</depend>
+  <depend>cv_bridge</depend>
+
+  <export><build_type>ament_python</build_type></export>
+</package>
