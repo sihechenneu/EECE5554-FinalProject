@@ -2,6 +2,15 @@
 
 YOLO-based trash detection for images, video, and ROS 2. The package builds as **`trash_detection_2d`**.
 
+**Workspace (ROS 2 Jazzy):** Build from the workspace root (e.g. `EECE5554-FinalProject`). Use **`--merge-install`** so `trash_detection_2d` and `yolov8_msgs` share one prefix and `ros2 run` finds the package. Then source the top-level install in every terminal where you run ROS commands:
+
+```bash
+cd /path/to/EECE5554-FinalProject   # workspace root
+# If you already have an install/ from a previous non-merge build, remove it first:
+#   rm -rf install build
+colcon build --packages-select yolov8_msgs trash_detection_2d --merge-install
+source install/setup.bash
+```
 
 ---
 
@@ -13,11 +22,11 @@ Uses `yolo_trash.detector` and optional `--weights` (default: `yolo_trash/best.p
 cd src/visual/yolo_trash 
 python -m yolo_trash.inference --source /path/to/image_or_video
 python -m yolo_trash.inference --source 0 --show   # webcam
-
-```
-OR
 ```
 
+Or after building the workspace and sourcing `install/setup.bash`:
+
+```bash
 ros2 run trash_detection_2d yolo_trash_inference -- --source /path/to/image_or_video
 ```
 
@@ -27,12 +36,15 @@ ros2 run trash_detection_2d yolo_trash_inference -- --source /path/to/image_or_v
 
 Subscribes to an RGB image topic and publishes **`yolov8_msgs/Yolov8Inference`** (header + list of `InferenceResult`: `class_name`, `coordinates` bbox).
 
-**Build and run:**
+**Build and run** (from workspace root; use `--merge-install` and source `install/setup.bash`):
 
 ```bash
-colcon build --packages-select yolov8_msgs trash_detection_2d && source install/setup.bash
+colcon build --packages-select yolov8_msgs trash_detection_2d --merge-install
+source install/setup.bash
 ros2 run trash_detection_2d yolo_trash_subscriber
 ```
+
+The node subscribes to the image topic and publishes detections; it runs independently (no camera required to start). Remap topics or pass `weights` if needed.
 
 **Launch file** (with remappable args):
 
