@@ -10,7 +10,7 @@ from yolo_trash.detector import run_detection
 class YoloTrashSubscriber(Node):
     def __init__(self):
         super().__init__("yolo_trash_subscriber")
-        self.declare_parameter("image_topic", "/camera/color/image_raw")
+        self.declare_parameter("image_topic", "/oakd/rgb/image_raw")
         self.declare_parameter("inference_topic", "/yolo_trash/inference")
         self.declare_parameter("weights", "")
         self.declare_parameter("conf", 0.35)
