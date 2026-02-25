@@ -5,13 +5,22 @@ from tqdm import tqdm
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 DATASET_ROOT = _WORKSPACE_ROOT / "datasets" / "taco_yolo"
 TACO_REPO    = _WORKSPACE_ROOT / "TACO"
-VAL_RATIO    = 0.2
+VAL_RATIO    = 0.1
 SEED         = 42
 
 SUPERCATEGORY_TO_CLASS = {
-    "Bottle": "Bottle", "Can": "Can", "Plastic bag & wrapper": "Plastic bag",
-    "Carton": "Carton", "Cup": "Cup", "Lid": "Lid",
-    "Cigarette": "Cigarette", "Paper": "Paper", "Straw": "Straw",
+    # "Bottle": "Bottle", "Can": "Can", "Plastic bag & wrapper": "Plastic bag",
+    # "Carton": "Carton", "Cup": "Cup", "Lid": "Lid",
+    # "Cigarette": "Cigarette", "Paper": "Paper", "Straw": "Straw",
+    "Bottle": "Bottle", 
+    "Carton": "Bottle",
+    "Can": "Can", 
+    "Cup": "Cup", 
+    "Lid": "Lid",
+    "Plastic bag & wrapper": "Plastic bag",
+    "Carton": "Paper",
+    "Paper": "Paper",
+
 }
 DEFAULT_CLASS = "Other"
 
@@ -70,7 +79,8 @@ def create_yolo_dataset(labels, images_meta, class_names):
             src = TACO_REPO / fname
         if not src.exists():
             continue
-        stem, suffix = Path(fname).stem, Path(fname).suffix
+        unique_name = fname.replace("/", "_").replace("\\", "_")
+        stem, suffix = Path(unique_name).stem, Path(fname).suffix
         shutil.copy2(src, DATASET_ROOT / "images" / split / f"{stem}{suffix}")
         with open(DATASET_ROOT / "labels" / split / f"{stem}.txt", "w") as f:
             f.write("\n".join(labels[fname]) + "\n")

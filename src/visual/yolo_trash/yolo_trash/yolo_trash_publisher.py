@@ -8,8 +8,8 @@ class YoloTrashPublisher(Node):
     def __init__(self):
         super().__init__("yolo_trash_publisher")
         self.declare_parameter("bag_path", "")
-        self.declare_parameter("image_topic_in_bag", "/oakd/rgb/image_raw")
-        self.declare_parameter("image_topic_out", "/oakd/rgb/image_raw")
+        self.declare_parameter("image_topic_in_bag", "/oakd/rgb/preview/image_raw")
+        self.declare_parameter("image_topic_out", "/oakd/rgb/preview/image_raw")
         self.declare_parameter("storage_id", "mcap")
         self.declare_parameter("rate", 10.0)
 
