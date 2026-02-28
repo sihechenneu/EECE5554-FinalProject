@@ -3,7 +3,7 @@ import rospy
 import tf2_ros
 import numpy as np
 from std_srvs.srv import SetBool
-from tf.transformations import euler_from_quaternion
+from tf_transformations import euler_from_quaternion
 from geometry_msgs.msg import TransformStamped, Quaternion
 from interbotix_perception_modules.srv import *
 from interbotix_perception_modules.msg import ClusterInfo

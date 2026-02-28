@@ -1082,9 +1082,20 @@ bool InterbotixRobotXS::robot_srv_get_robot_info(const std::shared_ptr<interboti
     if (urdf_exists)
     {
       ptr = model.getJoint(name);
+    }
+    
+    if (ptr != nullptr && ptr->limits != nullptr)
+    {
       res->joint_lower_limits.push_back(ptr->limits->lower);
       res->joint_upper_limits.push_back(ptr->limits->upper);
       res->joint_velocity_limits.push_back(ptr->limits->velocity);
+    }
+    else
+    {
+      // Fallback default values if URDF missing or joint/limits undefined
+      res->joint_lower_limits.push_back(-3.14159f);
+      res->joint_upper_limits.push_back(3.14159f);
+      res->joint_velocity_limits.push_back(3.14159f);
     }
   }
 

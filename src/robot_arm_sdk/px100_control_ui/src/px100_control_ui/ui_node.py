@@ -17,6 +17,8 @@ from rclpy.parameter import Parameter
 from sensor_msgs.msg import JointState
 from interbotix_xs_msgs.msg import JointGroupCommand, JointSingleCommand
 from interbotix_xs_msgs.srv import TorqueEnable, RobotInfo, Reboot
+from interbotix_xs_modules.core import InterbotixRobotXSCore
+from interbotix_xs_modules.gripper import InterbotixGripperXSInterface
 
 # Flask app (import here so we only need flask when running the node)
 try:
@@ -181,6 +183,9 @@ class Px100ControlUINode(Node):
                 'joint_sleep_positions': [0.0, -1.88, 1.5, 0.8, 0.0],
             }
 
+        self.dxl = InterbotixRobotXSCore(self.robot_name, robot_name=self.robot_name, init_node=False, node=self)
+        self.gripper = InterbotixGripperXSInterface(self.dxl, 'gripper')
+
         self.timer = self.create_timer(0.05, self._process_cmd_queue)
         self.get_logger().info(f'Px100 Control UI node started; robot_name={self.robot_name}')
 
@@ -230,26 +235,17 @@ class Px100ControlUINode(Node):
                 if item[0] == 'joint_single':
                     _, name, cmd = item
                     cmd_f = float(cmd)
-                    msg = JointSingleCommand()
-                    msg.name = str(name)
-                    msg.cmd = cmd_f
-                    self.pub_single.publish(msg)
                     if name == 'gripper':
-                        self.get_logger().info(f'Published gripper cmd={cmd_f:.3f}', throttle_duration_sec=0.5)
-                        try:
-                            all_cmd = [
-                                self.latest_joint_states.get('waist', 0.0),
-                                self.latest_joint_states.get('shoulder', 0.0),
-                                self.latest_joint_states.get('elbow', 0.0),
-                                self.latest_joint_states.get('wrist_angle', 0.0),
-                                cmd_f,
-                            ]
-                            grp = JointGroupCommand()
-                            grp.name = 'all'
-                            grp.cmd = all_cmd
-                            self.pub_group.publish(grp)
-                        except Exception:
-                            pass
+                        self.get_logger().info(f'Triggered gripper routine cmd={cmd_f:.3f}', throttle_duration_sec=0.5)
+                        if cmd_f > 0.4:  # Frontend sends ~0.8 for open
+                            self.gripper.open()
+                        else:  # Frontend sends ~0.0 for close
+                            self.gripper.close()
+                    else:
+                        msg = JointSingleCommand()
+                        msg.name = str(name)
+                        msg.cmd = cmd_f
+                        self.pub_single.publish(msg)
                 elif item[0] == 'joint_group':
                     _, name, cmd = item
                     msg = JointGroupCommand()

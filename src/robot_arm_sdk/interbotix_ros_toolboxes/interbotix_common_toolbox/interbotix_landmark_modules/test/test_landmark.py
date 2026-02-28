@@ -8,7 +8,7 @@ import rospy
 import rosunit
 import tf2_ros
 
-from tf.transformations import quaternion_from_euler, euler_from_quaternion
+from tf_transformations import quaternion_from_euler, euler_from_quaternion
 from geometry_msgs.msg import Pose, Pose2D, TransformStamped, Quaternion
 from interbotix_landmark_modules.landmark import Landmark, LandmarkCollection
 
