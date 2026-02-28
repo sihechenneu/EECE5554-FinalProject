@@ -267,6 +267,12 @@
         <input type="range" id="speedSlider" min="50" max="200" value="100" title="Movement speed (50%–200%)">
         <span id="speedValue" class="speed-value">100%</span>
       </div>
+      <div class="btn-row" style="margin-bottom: 0.5rem;">
+        <button type="button" id="gripperOpenBtn" class="primary" title="Send gripper to full open (release)">Open gripper</button>
+        <button type="button" id="gripperCloseBtn" title="Send gripper to closed">Close gripper</button>
+        <button type="button" id="gripperRebootBtn" title="Reboot gripper motor to clear red/green LED error">Reboot gripper</button>
+      </div>
+      <p class="subtitle" style="margin-bottom: 1rem; font-size: 0.8rem;">If the LED near the gripper flashes red/green, the motor is in error — use &quot;Reboot gripper&quot; to clear it.</p>
       <div id="jointControls"></div>
     </div>
 
@@ -298,11 +304,18 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ cmd_type: cmdType, name, enable })
+      }).then(r => r.ok ? r.json() : Promise.reject(r)),
+      rebootMotors: (cmdType, name, enable, smartReboot) => fetch('/api/reboot_motors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cmd_type: cmdType || 'single', name: name || 'gripper', enable: enable !== false, smart_reboot: smartReboot !== false })
       }).then(r => r.ok ? r.json() : Promise.reject(r))
     };
 
     let robotInfo = null;
     let jointValues = {};
+    const LAST_CMD_DEBOUNCE_MS = 2500;
+    let lastCommandTimePerJoint = {};
     const STEP_BASE = 0.36;
     const REPEAT_DELAY_MS = 350;
     const REPEAT_INTERVAL_BASE_MS = 30;
@@ -364,6 +377,7 @@
           const v = Math.max(low, Math.min(high, jointValues[name] + delta));
           jointValues[name] = v;
           valueSpan.textContent = v.toFixed(3);
+          lastCommandTimePerJoint[name] = Date.now();
           API.jointSingle(name, v).catch(showError);
           return v;
         }
@@ -407,13 +421,16 @@
 
     function updateFromState(state) {
       if (!state.joint_states || !robotInfo) return;
+      const now = Date.now();
       robotInfo.joint_names.forEach(name => {
-        const v = state.joint_states[name];
-        if (v != null) {
-          jointValues[name] = v;
-          const span = document.querySelector(`.joint-value[data-joint="${name}"]`);
-          if (span) span.textContent = v.toFixed(3);
-        }
+        let v = state.joint_states[name];
+        if (name === 'gripper' && (v == null)) v = state.joint_states['left_finger'];
+        if (v == null) return;
+        const lastCmd = lastCommandTimePerJoint[name];
+        if (lastCmd != null && (now - lastCmd) < LAST_CMD_DEBOUNCE_MS) return;
+        jointValues[name] = v;
+        const span = document.querySelector(`.joint-value[data-joint="${name}"]`);
+        if (span) span.textContent = v.toFixed(3);
       });
     }
 
@@ -431,9 +448,12 @@
       const armNames = names.filter(n => n !== 'gripper');
       const armCmd = armNames.map(n => jointValues[n] ?? 0);
       const gripperIdx = names.indexOf('gripper');
-      if (armCmd.length) API.jointGroup('arm', armCmd).catch(showError);
+      const t = Date.now();
+      if (armCmd.length) {
+        API.jointGroup('arm', armCmd).then(() => { armNames.forEach(n => { lastCommandTimePerJoint[n] = t; }); }).catch(showError);
+      }
       if (gripperIdx >= 0 && cmd[gripperIdx] != null) {
-        API.jointSingle('gripper', cmd[gripperIdx]).catch(showError);
+        API.jointSingle('gripper', cmd[gripperIdx]).then(() => { lastCommandTimePerJoint['gripper'] = t; }).catch(showError);
       }
     }
 
@@ -455,6 +475,25 @@
     document.getElementById('speedSlider').addEventListener('input', function() {
       speedPercent = Number(this.value);
       document.getElementById('speedValue').textContent = speedPercent + '%';
+    });
+
+    function sendGripperTo(targetOpen) {
+      if (!robotInfo) return;
+      const idx = robotInfo.joint_names.indexOf('gripper');
+      if (idx < 0) return;
+      const low = robotInfo.joint_lower_limits[idx] ?? 0;
+      const high = robotInfo.joint_upper_limits[idx] ?? 0.8;
+      const v = targetOpen ? high : low;
+      jointValues['gripper'] = v;
+      const span = document.querySelector('.joint-value[data-joint="gripper"]');
+      if (span) span.textContent = v.toFixed(3);
+      lastCommandTimePerJoint['gripper'] = Date.now();
+      API.jointSingle('gripper', v).catch(showError);
+    }
+    document.getElementById('gripperOpenBtn').addEventListener('click', () => sendGripperTo(true));
+    document.getElementById('gripperCloseBtn').addEventListener('click', () => sendGripperTo(false));
+    document.getElementById('gripperRebootBtn').addEventListener('click', () => {
+      API.rebootMotors('single', 'gripper', true, true).then(() => showError('')).catch(showError);
     });
 
     document.querySelectorAll('[data-preset]').forEach(btn => {

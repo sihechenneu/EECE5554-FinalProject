@@ -16,7 +16,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from sensor_msgs.msg import JointState
 from interbotix_xs_msgs.msg import JointGroupCommand, JointSingleCommand
-from interbotix_xs_msgs.srv import TorqueEnable, RobotInfo
+from interbotix_xs_msgs.srv import TorqueEnable, RobotInfo, Reboot
 
 # Flask app (import here so we only need flask when running the node)
 try:
@@ -108,6 +108,23 @@ def create_app(static_folder: Path):
         ros_bridge.cmd_queue.put(('torque_enable', cmd_type, name, bool(enable)))
         return jsonify({'ok': True})
 
+    @app.route('/api/reboot_motors', methods=['POST'])
+    def api_reboot_motors():
+        """Reboot motor(s) to clear errors (enqueued)."""
+        if ros_bridge is None:
+            return jsonify({'error': 'ROS bridge not ready'}), 503
+        data = request.get_json(force=True, silent=True) or {}
+        cmd_type = data.get('cmd_type', 'single')
+        name = data.get('name', 'gripper')
+        enable = data.get('enable', True)
+        smart_reboot = data.get('smart_reboot', True)
+        if isinstance(enable, str):
+            enable = enable.lower() in ('true', '1', 'yes')
+        if isinstance(smart_reboot, str):
+            smart_reboot = smart_reboot.lower() in ('true', '1', 'yes')
+        ros_bridge.cmd_queue.put(('reboot_motors', cmd_type, name, bool(enable), bool(smart_reboot)))
+        return jsonify({'ok': True})
+
     return app
 
 
@@ -145,6 +162,7 @@ class Px100ControlUINode(Node):
             10,
         )
         self.torque_client = self.create_client(TorqueEnable, f'{ns}/torque_enable')
+        self.reboot_client = self.create_client(Reboot, f'{ns}/reboot_motors')
         self.robot_info_client_arm = self.create_client(RobotInfo, f'{ns}/get_robot_info')
         self.robot_info_client_gripper = self.create_client(RobotInfo, f'{ns}/get_robot_info')
 
@@ -202,6 +220,8 @@ class Px100ControlUINode(Node):
         for i, name in enumerate(msg.name):
             if i < len(msg.position):
                 self.latest_joint_states[name] = float(msg.position[i])
+        if 'left_finger' in self.latest_joint_states and 'gripper' not in msg.name:
+            self.latest_joint_states['gripper'] = self.latest_joint_states['left_finger']
 
     def _process_cmd_queue(self):
         try:
@@ -209,10 +229,27 @@ class Px100ControlUINode(Node):
                 item = self.cmd_queue.get_nowait()
                 if item[0] == 'joint_single':
                     _, name, cmd = item
+                    cmd_f = float(cmd)
                     msg = JointSingleCommand()
-                    msg.name = name
-                    msg.cmd = cmd
+                    msg.name = str(name)
+                    msg.cmd = cmd_f
                     self.pub_single.publish(msg)
+                    if name == 'gripper':
+                        self.get_logger().info(f'Published gripper cmd={cmd_f:.3f}', throttle_duration_sec=0.5)
+                        try:
+                            all_cmd = [
+                                self.latest_joint_states.get('waist', 0.0),
+                                self.latest_joint_states.get('shoulder', 0.0),
+                                self.latest_joint_states.get('elbow', 0.0),
+                                self.latest_joint_states.get('wrist_angle', 0.0),
+                                cmd_f,
+                            ]
+                            grp = JointGroupCommand()
+                            grp.name = 'all'
+                            grp.cmd = all_cmd
+                            self.pub_group.publish(grp)
+                        except Exception:
+                            pass
                 elif item[0] == 'joint_group':
                     _, name, cmd = item
                     msg = JointGroupCommand()
@@ -226,6 +263,14 @@ class Px100ControlUINode(Node):
                     req.name = name
                     req.enable = enable
                     self.torque_client.call_async(req)
+                elif item[0] == 'reboot_motors':
+                    _, cmd_type, name, enable, smart_reboot = item
+                    req = Reboot.Request()
+                    req.cmd_type = cmd_type
+                    req.name = name
+                    req.enable = enable
+                    req.smart_reboot = smart_reboot
+                    self.reboot_client.call_async(req)
         except queue.Empty:
             pass
 
