@@ -9,7 +9,7 @@ from geometry_msgs.msg import Quaternion, QuaternionStamped
 try:
     from tf_transformations import euler_matrix, euler_from_matrix
 except ImportError:
-    from tf.transformations import euler_matrix, euler_from_matrix
+    from tf_transformations import euler_matrix, euler_from_matrix
 
 # Inverts a homogeneous transformation matrix
 def transInv(T):

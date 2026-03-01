@@ -10,7 +10,7 @@ import tf2_geometry_msgs
 try:
     from tf_transformations import euler_from_quaternion
 except ImportError:
-    from tf.transformations import euler_from_quaternion
+    from tf_transformations import euler_from_quaternion
 
 
 class Landmark(object):

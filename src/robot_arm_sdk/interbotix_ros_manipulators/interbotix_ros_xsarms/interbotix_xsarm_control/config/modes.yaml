@@ -8,5 +8,5 @@ groups:
 
 singles:
   gripper:
-    operating_mode: position   # use 'position' for radian commands (e.g. 0 = closed, ~0.8 = open); use 'pwm' for -885 to 885
+    operating_mode: pwm   # use 'position' for radian commands (e.g. 0 = closed, ~0.8 = open); use 'pwm' for -885 to 885
     torque_enable: true

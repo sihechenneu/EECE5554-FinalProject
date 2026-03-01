@@ -344,25 +344,50 @@ class InterbotixRobotXS(Node):
             res.mode = self.motor_map[req.name]["mode"]
 
         res.num_joints = len(joint_names)
+        
+        j_ids, j_indices = [], []
+        j_sleep = []
+        j_lower, j_upper, j_velocity = [], [], []
+        j_names = []
+
         for name in joint_names:
-            res.joint_ids.append(self.motor_map[name]["motor_id"])
+            j_ids.append(int(self.motor_map[name]["motor_id"]))
             if name in self.gripper_map:
-                res.joint_sleep_positions.append(self._robot_convert_angular_position_to_linear(name, 0))
+                j_sleep.append(float(self._robot_convert_angular_position_to_linear(name, 0)))
                 name = self.gripper_map[name]["left_finger"]
-                res.joint_names.append(name)
+                j_names.append(name)
             else:
-                res.joint_sleep_positions.append(self.sleep_map[name])
-                res.joint_names.append(name)
-            res.joint_state_indices.append(self.js_index_map[name])
-            limits = self.rd_limits.get(name, (-3.14159, 3.14159, 1.0))
-            res.joint_lower_limits.append(limits[0])
-            res.joint_upper_limits.append(limits[1])
-            res.joint_velocity_limits.append(limits[2])
+                j_sleep.append(float(self.sleep_map[name]))
+                j_names.append(name)
+            j_indices.append(int(self.js_index_map[name]))
+            
+            # limits lookup should use the actual finger name if it is a gripper macro
+            urdf_name = name
+            if name in self.gripper_map:
+                urdf_name = self.gripper_map[name]["left_finger"]
+                
+            limits = self.rd_limits.get(urdf_name) or (-3.14159, 3.14159, 1.0)
+            j_lower.append(float(limits[0]))
+            j_upper.append(float(limits[1]))
+            j_velocity.append(float(limits[2]))
+            
+        print("[xs_sdk_sim debug] Python arrays before struct assign: ", j_lower, j_upper, j_velocity)
+
+        res.joint_ids = list(map(int, j_ids))
+        res.joint_sleep_positions = list(map(float, j_sleep))
+        res.joint_names = j_names
+        res.joint_state_indices = list(map(int, j_indices))
+        res.joint_lower_limits = list(map(float, j_lower))
+        res.joint_upper_limits = list(map(float, j_upper))
+        res.joint_velocity_limits = list(map(float, j_velocity))
+        
+        print("[xs_sdk_sim debug] RobotInfo Response Struct post assign: ", res.joint_lower_limits, res.joint_upper_limits, res.joint_velocity_limits)
+        
         if req.name != "all":
-            res.name.append(req.name)
+            res.name = [req.name]
         else:
-            for key in self.group_map:
-                res.name.append(key)
+            res.name = list(self.group_map.keys())
+            
         return res
 
     def _robot_srv_set_operating_modes(self, req, res):

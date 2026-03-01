@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PincherX 100 Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600;700&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f0f12;
+      --surface: #18181c;
+      --border: #2a2a32;
+      --text: #e4e4e7;
+      --muted: #71717a;
+      --accent: #22c55e;
+      --accent-dim: #16a34a;
+      --danger: #ef4444;
+      --radius: 10px;
+      --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 1.5rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+      box-shadow: var(--shadow);
+    }
+
+    .card h2 {
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 1rem;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .status-dot.connected {
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+    }
+
+    .joint-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .joint-row .joint-label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      color: var(--text);
+      min-width: 100px;
+    }
+
+    .arrow-btn {
+      width: 40px;
+      height: 40px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      font-weight: 700;
+      line-height: 1;
+      padding: 0;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--accent);
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .arrow-btn:hover {
+      background: var(--accent);
+      color: var(--bg);
+      border-color: var(--accent);
+    }
+
+    .arrow-btn:active {
+      transform: scale(0.95);
+    }
+
+    .joint-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      color: var(--muted);
+      min-width: 72px;
+      text-align: center;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    button {
+      font-family: 'Outfit', sans-serif;
+      font-weight: 600;
+      font-size: 0.85rem;
+      padding: 0.6rem 1rem;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    button:hover {
+      background: var(--border);
+      border-color: var(--muted);
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--bg);
+    }
+
+    button.primary:hover {
+      background: var(--accent-dim);
+      border-color: var(--accent-dim);
+    }
+
+    button.danger {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: white;
+    }
+
+    .presets .btn-row {
+      margin-top: 0.5rem;
+    }
+
+    .torque-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.5rem;
+    }
+
+    .toggle {
+      position: relative;
+      width: 44px;
+      height: 24px;
+      background: var(--border);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .toggle.on {
+      background: var(--accent);
+    }
+
+    .toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 20px;
+      height: 20px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    }
+
+    .toggle.on::after {
+      transform: translateX(20px);
+    }
+
+    .error-msg {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid var(--danger);
+      color: #fca5a5;
+      padding: 0.75rem;
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      margin-bottom: 1rem;
+      display: none;
+    }
+
+    .error-msg.show {
+      display: block;
+    }
+
+    .speed-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    .speed-row label {
+      font-size: 0.9rem;
+      min-width: 50px;
+    }
+
+    .speed-row input[type="range"] {
+      flex: 1;
+      max-width: 200px;
+      height: 8px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: var(--border);
+      border-radius: 4px;
+    }
+
+    .speed-row input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    .speed-row input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    .speed-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      color: var(--muted);
+      min-width: 40px;
+    }
+
+    .estop-btn {
+      display: block;
+      width: 100%;
+      padding: 1rem 1.5rem;
+      font-size: 1.1rem;
+      font-weight: 700;
+      border-radius: var(--radius);
+      border: 2px solid var(--danger);
+      background: var(--danger);
+      color: white;
+      cursor: pointer;
+      margin-top: 0.75rem;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    .estop-btn:hover {
+      background: #dc2626;
+      border-color: #dc2626;
+    }
+
+    .estop-btn:active {
+      transform: scale(0.98);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>PincherX 100 Control</h1>
+    <p class="subtitle">ROS 2 Jazzy · Control all joints and movements</p>
+
+    <div id="error" class="error-msg"></div>
+
+    <div class="card">
+      <h2>Connection</h2>
+      <div class="status-row">
+        <span id="statusDot" class="status-dot"></span>
+        <span id="statusText">Connecting…</span>
+      </div>
+      <div class="torque-row">
+        <span>Torque enable (arm + gripper)</span>
+        <div id="torqueToggle" class="toggle on" title="Toggle torque on/off"></div>
+      </div>
+      <div style="display: flex; gap: 0.5rem;">
+        <button type="button" id="rebootAllBtn" class="primary"
+          style="flex: 1; font-weight: 700; border-radius: var(--radius); padding: 1rem; margin-top: 0.75rem;"
+          title="Smart Reboot all crashed motors">Revive Motors</button>
+        <button type="button" id="estopBtn" class="estop-btn" style="flex: 1; min-width: 0;"
+          title="Disable torque immediately">E-Stop</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Joint control (rad) — click arrows to move</h2>
+      <div class="speed-row">
+        <label for="speedSlider">Speed</label>
+        <input type="range" id="speedSlider" min="50" max="200" value="100" title="Movement speed (50%–200%)">
+        <span id="speedValue" class="speed-value">100%</span>
+      </div>
+      <div id="jointControls"></div>
+
+      <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+        <div class="btn-row" style="margin-bottom: 0.5rem;">
+          <button type="button" id="gripperOpenBtn" class="primary" title="Send gripper to full open (release)">Open
+            gripper</button>
+          <button type="button" id="gripperCloseBtn" title="Send gripper to closed">Close gripper</button>
+          <button type="button" id="gripperRebootBtn" title="Reboot gripper motor to clear red/green LED error">Reboot
+            gripper</button>
+        </div>
+        <p class="subtitle" style="margin-bottom: 0; font-size: 0.8rem;">If the LED near the gripper flashes red/green,
+          the motor is in error — use &quot;Reboot gripper&quot; to clear it.</p>
+      </div>
+    </div>
+
+    <div class="card presets">
+      <h2>Preset poses</h2>
+      <div class="btn-row">
+        <button type="button" data-preset="sleep">Sleep</button>
+        <button type="button" data-preset="home">Home</button>
+        <button type="button" data-preset="ready">Ready</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = {
+      state: () => fetch('/api/state').then(r => r.ok ? r.json() : Promise.reject(r)),
+      robotInfo: () => fetch('/api/robot_info').then(r => r.ok ? r.json() : Promise.reject(r)),
+      jointSingle: (name, cmd) => fetch('/api/joint_single', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, cmd })
+      }).then(r => r.ok ? r.json() : Promise.reject(r)),
+      jointGroup: (name, cmd) => fetch('/api/joint_group', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, cmd })
+      }).then(r => r.ok ? r.json() : Promise.reject(r)),
+      torqueEnable: (cmdType, name, enable) => fetch('/api/torque_enable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cmd_type: cmdType, name, enable })
+      }).then(r => r.ok ? r.json() : Promise.reject(r)),
+      rebootMotors: (cmdType, name, enable, smartReboot) => fetch('/api/reboot_motors', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cmd_type: cmdType || 'single', name: name || 'gripper', enable: enable !== false, smart_reboot: smartReboot !== false })
+      }).then(r => r.ok ? r.json() : Promise.reject(r))
+    };
+
+    let robotInfo = null;
+    let jointValues = {};
+    let actualJointValues = {};
+    const LAST_CMD_DEBOUNCE_MS = 2500;
+    let lastCommandTimePerJoint = {};
+    const STEP_BASE = 0.36;
+    const REPEAT_DELAY_MS = 350;
+    const REPEAT_INTERVAL_BASE_MS = 30;
+    let speedPercent = 100;
+    let repeatTimerId = null;
+    let repeatIntervalId = null;
+    const PRESETS = {
+      sleep: [0, -1.88, 1.5, 0.8, 0],
+      home: [0, 0, 0, 0, 0],
+      ready: [0, -0.5, 0.8, 0.4, 0]
+    };
+
+    function showError(msg) {
+      const el = document.getElementById('error');
+      el.textContent = msg || '';
+      el.classList.toggle('show', !!msg);
+    }
+
+    function setStatus(connected) {
+      document.getElementById('statusDot').classList.toggle('connected', connected);
+      document.getElementById('statusText').textContent = connected ? 'Connected to robot' : 'Disconnected';
+    }
+
+    function getStep() { return STEP_BASE * (speedPercent / 100); }
+    function getRepeatIntervalMs() { return Math.max(15, REPEAT_INTERVAL_BASE_MS * (100 / speedPercent)); }
+
+    function buildJointArrows() {
+      if (!robotInfo || !robotInfo.joint_names) return;
+      const container = document.getElementById('jointControls');
+      container.innerHTML = '';
+      jointValues = {};
+      robotInfo.joint_names.forEach((name, i) => {
+        if (name === 'gripper' || name === 'left_finger') return;
+        const low = robotInfo.joint_lower_limits[i] ?? -3.14;
+        const high = robotInfo.joint_upper_limits[i] ?? 3.14;
+        const row = document.createElement('div');
+        row.className = 'joint-row';
+        const label = document.createElement('span');
+        label.className = 'joint-label';
+        label.textContent = name;
+        const btnMinus = document.createElement('button');
+        btnMinus.type = 'button';
+        btnMinus.className = 'arrow-btn';
+        btnMinus.innerHTML = '−';
+        btnMinus.title = 'Decrease ' + name;
+        const valueSpan = document.createElement('span');
+        valueSpan.className = 'joint-value';
+        valueSpan.dataset.joint = name;
+        valueSpan.textContent = '0.00';
+        const btnPlus = document.createElement('button');
+        btnPlus.type = 'button';
+        btnPlus.className = 'arrow-btn';
+        btnPlus.innerHTML = '+';
+        btnPlus.title = 'Increase ' + name;
+        const initialVal = (low + high) / 2;
+        jointValues[name] = initialVal;
+        valueSpan.textContent = initialVal.toFixed(3);
+
+        function stepAndSend(delta) {
+          const currentCmd = jointValues[name];
+          const actual = actualJointValues[name];
+          const STUCK_THRESHOLD = 0.2; // approx 11.5 deg
+
+          if (actual != null) {
+            if (delta > 0 && (currentCmd - actual) > STUCK_THRESHOLD) {
+              showError(`Safety Guard: Motor '${name}' is blocked or heavily lagging. Cannot move further forward.`);
+              return currentCmd;
+            }
+            if (delta < 0 && (actual - currentCmd) > STUCK_THRESHOLD) {
+              showError(`Safety Guard: Motor '${name}' is blocked or heavily lagging. Cannot move further backward.`);
+              return currentCmd;
+            }
+          }
+
+          const v = Math.max(low, Math.min(high, currentCmd + delta));
+          jointValues[name] = v;
+          valueSpan.textContent = v.toFixed(3);
+          lastCommandTimePerJoint[name] = Date.now();
+          showError(''); // clear any blockage error
+          API.jointSingle(name, v).catch(showError);
+          return v;
+        }
+
+        function stopRepeat() {
+          if (repeatTimerId) { clearTimeout(repeatTimerId); repeatTimerId = null; }
+          if (repeatIntervalId) { clearInterval(repeatIntervalId); repeatIntervalId = null; }
+        }
+
+        function startRepeat(delta) {
+          stepAndSend(delta);
+          stopRepeat();
+          const intervalMs = getRepeatIntervalMs();
+          repeatTimerId = setTimeout(() => {
+            repeatTimerId = null;
+            repeatIntervalId = setInterval(() => {
+              const v = stepAndSend(delta);
+              if ((delta < 0 && v <= low) || (delta > 0 && v >= high)) stopRepeat();
+            }, intervalMs);
+          }, REPEAT_DELAY_MS);
+        }
+
+        ['mousedown', 'touchstart'].forEach(ev => {
+          btnMinus.addEventListener(ev, (e) => { e.preventDefault(); startRepeat(-getStep()); });
+          btnPlus.addEventListener(ev, (e) => { e.preventDefault(); startRepeat(getStep()); });
+        });
+        ['mouseup', 'mouseleave', 'touchend', 'touchcancel'].forEach(ev => {
+          btnMinus.addEventListener(ev, stopRepeat);
+          btnPlus.addEventListener(ev, stopRepeat);
+        });
+        btnMinus.addEventListener('click', (e) => { e.preventDefault(); });
+        btnPlus.addEventListener('click', (e) => { e.preventDefault(); });
+
+        row.appendChild(label);
+        row.appendChild(btnMinus);
+        row.appendChild(valueSpan);
+        row.appendChild(btnPlus);
+        container.appendChild(row);
+      });
+    }
+
+    function updateFromState(state) {
+      if (!state.joint_states || !robotInfo) return;
+      const now = Date.now();
+      robotInfo.joint_names.forEach(name => {
+        let v = state.joint_states[name];
+        if (name === 'gripper' && (v == null)) v = state.joint_states['left_finger'];
+        if (v == null) return;
+        actualJointValues[name] = v;
+        const lastCmd = lastCommandTimePerJoint[name];
+        if (lastCmd != null && (now - lastCmd) < LAST_CMD_DEBOUNCE_MS) return;
+        jointValues[name] = v;
+        const span = document.querySelector(`.joint-value[data-joint="${name}"]`);
+        if (span) span.textContent = v.toFixed(3);
+      });
+    }
+
+    function applyPreset(presetName) {
+      const cmd = PRESETS[presetName];
+      if (!cmd || !robotInfo) return;
+      const names = robotInfo.joint_names;
+      names.forEach((name, i) => {
+        if (cmd[i] != null) {
+          jointValues[name] = cmd[i];
+          const span = document.querySelector(`.joint-value[data-joint="${name}"]`);
+          if (span) span.textContent = Number(cmd[i]).toFixed(3);
+        }
+      });
+      const armNames = names.filter(n => n !== 'gripper' && n !== 'left_finger');
+      const armCmd = armNames.map(n => jointValues[n] ?? 0);
+      const gripperIdx = names.indexOf('gripper');
+      const t = Date.now();
+      if (armCmd.length) {
+        API.jointGroup('arm', armCmd).then(() => { armNames.forEach(n => { lastCommandTimePerJoint[n] = t; }); }).catch(showError);
+      }
+      if (gripperIdx >= 0 && cmd[gripperIdx] != null) {
+        API.jointSingle('gripper', cmd[gripperIdx]).then(() => { lastCommandTimePerJoint['gripper'] = t; }).catch(showError);
+      }
+    }
+
+    document.getElementById('torqueToggle').addEventListener('click', function () {
+      this.classList.toggle('on');
+      const enable = this.classList.contains('on');
+      API.torqueEnable('group', 'arm', enable).catch(showError);
+      API.torqueEnable('single', 'gripper', enable).catch(showError);
+    });
+
+    document.getElementById('estopBtn').addEventListener('click', function () {
+      if (repeatTimerId) { clearTimeout(repeatTimerId); repeatTimerId = null; }
+      if (repeatIntervalId) { clearInterval(repeatIntervalId); repeatIntervalId = null; }
+      document.getElementById('torqueToggle').classList.remove('on');
+      API.torqueEnable('group', 'arm', false).catch(showError);
+      API.torqueEnable('single', 'gripper', false).catch(showError);
+    });
+
+    document.getElementById('rebootAllBtn').addEventListener('click', function () {
+      API.rebootMotors('group', 'all', true, true).then(() => {
+        showError(''); // Clear errors
+        document.getElementById('torqueToggle').classList.add('on');
+      }).catch(showError);
+    });
+
+    document.getElementById('speedSlider').addEventListener('input', function () {
+      speedPercent = Number(this.value);
+      document.getElementById('speedValue').textContent = speedPercent + '%';
+    });
+
+    function sendGripperTo(targetOpen) {
+      if (!robotInfo) return;
+      const v = targetOpen ? 1.0 : 0.0;
+      lastCommandTimePerJoint['gripper'] = Date.now();
+      API.jointSingle('gripper', v).catch(showError);
+    }
+    document.getElementById('gripperOpenBtn').addEventListener('click', () => sendGripperTo(true));
+    document.getElementById('gripperCloseBtn').addEventListener('click', () => sendGripperTo(false));
+    document.getElementById('gripperRebootBtn').addEventListener('click', () => {
+      API.rebootMotors('single', 'gripper', true, true).then(() => showError('')).catch(showError);
+    });
+
+    document.querySelectorAll('[data-preset]').forEach(btn => {
+      btn.addEventListener('click', () => applyPreset(btn.dataset.preset));
+    });
+
+    (async function init() {
+      try {
+        robotInfo = await API.robotInfo();
+        buildJointArrows();
+        setStatus(true);
+        showError('');
+      } catch (e) {
+        setStatus(false);
+        showError('Could not load robot info. Is the arm driver running?');
+      }
+      setInterval(async () => {
+        try {
+          const state = await API.state();
+          setStatus(true);
+          updateFromState(state);
+        } catch {
+          setStatus(false);
+        }
+      }, 200);
+    })();
+  </script>
+</body>
+
+</html>
