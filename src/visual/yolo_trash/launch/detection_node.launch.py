@@ -5,7 +5,13 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
+import os
+from ament_index_python.packages import get_package_share_directory
+
 def generate_launch_description():
+    pkg_dir = get_package_share_directory("trash_detection_2d")
+    config_dir = os.path.join(pkg_dir, "config")
+    
     return LaunchDescription([
         DeclareLaunchArgument("image_topic", default_value="/camera/color/image_raw"),
         DeclareLaunchArgument("inference_topic", default_value="/yolo_trash/inference"),
@@ -27,6 +33,7 @@ def generate_launch_description():
                 "iou": LaunchConfiguration("iou"),
                 "imgsz": LaunchConfiguration("imgsz"),
                 "frame_id": LaunchConfiguration("frame_id"),
+                "nn_config_path": os.path.join(config_dir, "yolov8.json")
             }],
         ),
     ])

@@ -101,11 +101,24 @@ def main():
     stereo_max_depth_mm = getattr(args, "stereo_max_depth", 2000.0)
     yolo_topic = getattr(args, "yolo_topic", "")
     
+    YoloMsgClass = None
     if yolo_topic:
         try:
             from yolov8_msgs.msg import Yolov8Inference
+            YoloMsgClass = Yolov8Inference
         except ImportError:
-            print("yolov8_msgs not found. Make sure trash_detection_2d is built and sourced.", file=sys.stderr)
+            pass
+
+        try:
+            from vision_msgs.msg import Detection3DArray
+            YoloMsgClass3D = Detection3DArray
+            if YoloMsgClass is None or "spatial" in yolo_topic.lower() or "vision" in yolo_topic.lower():
+                YoloMsgClass = YoloMsgClass3D
+        except ImportError:
+            pass
+
+        if YoloMsgClass is None:
+            print("Message types for yolo_topic not found. Make sure vision_msgs is installed.", file=sys.stderr)
             sys.exit(1)
 
     class MultiImageSubscriber(Node):
@@ -115,11 +128,11 @@ def main():
                 self.create_subscription(Image, topic, lambda msg, t=topic: self.callback(msg, t), 1)
             
             if yolo_topic:
-                self.create_subscription(Yolov8Inference, yolo_topic, self.yolo_callback, 1)
+                self.create_subscription(YoloMsgClass, yolo_topic, self.yolo_callback, 1)
 
         def yolo_callback(self, msg):
             nonlocal latest_yolo
-            latest_yolo = msg.yolov8_inference
+            latest_yolo = msg
 
         def callback(self, msg, topic):
             bgr = image_msg_to_bgr(msg, topic, rgb_topic_as_rgb=rgb_as_rgb, stereo_max_depth_mm=stereo_max_depth_mm)
@@ -159,10 +172,51 @@ def main():
                 
                 # Draw YOLO bounding boxes on the original resolution before resize
                 if yolo_topic and latest_yolo is not None:
-                    for det in latest_yolo:
-                        x1, y1, x2, y2 = map(int, det.coordinates)
-                        cv2.rectangle(bgr, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                        cv2.putText(bgr, det.class_name, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    if hasattr(latest_yolo, 'yolov8_inference'):
+                        for det in latest_yolo.yolov8_inference:
+                            x1, y1, x2, y2 = map(int, det.coordinates)
+                            cv2.rectangle(bgr, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                            cv2.putText(bgr, det.class_name, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    elif hasattr(latest_yolo, 'detections'):
+                        for det in latest_yolo.detections:
+                            class_id = ""
+                            if len(det.results) > 0:
+                                class_id = getattr(det.results[0].hypothesis, 'class_id', "")
+                                if not class_id and hasattr(det.results[0], 'id'):
+                                    class_id = str(det.results[0].id)
+                            
+                            cx = det.bbox.center.position.x
+                            cy = det.bbox.center.position.y
+                            sx = det.bbox.size.x
+                            sy = det.bbox.size.y
+                            
+                            x1 = cx - sx / 2
+                            y1 = cy - sy / 2
+                            x2 = cx + sx / 2
+                            y2 = cy + sy / 2
+                            
+                            h_img, w_img = bgr.shape[:2]
+                            if sx <= 1.05 and sy <= 1.05 and cx <= 1.05 and cy <= 1.05:
+                                x1 *= w_img
+                                y1 *= h_img
+                                x2 *= w_img
+                                y2 *= h_img
+                            else:
+                                # Fix Geometry Miscalculation:
+                                # The VPU publishes boxes in the stretched square NN space (e.g., 320x320).
+                                # The source image is rectangular (e.g., 320w x 240h).
+                                # To map it perfectly back, we un-stretch the coordinates!
+                                # Assuming the width is 1:1 (320 -> 320), the NN scale is the image width.
+                                nn_scale = max(w_img, h_img) 
+                                x1 = (x1 / nn_scale) * w_img
+                                x2 = (x2 / nn_scale) * w_img
+                                y1 = (y1 / nn_scale) * h_img
+                                y2 = (y2 / nn_scale) * h_img
+                            
+                            x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
+
+                            cv2.rectangle(bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                            cv2.putText(bgr, class_id, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                         
                 h, w = bgr.shape[:2]
                 if max(h, w) > cell_size:
