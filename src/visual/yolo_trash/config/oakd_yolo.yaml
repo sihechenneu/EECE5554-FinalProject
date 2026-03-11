@@ -1,0 +1,50 @@
+/oakd:
+  ros__parameters:
+    camera:
+      i_enable_imu: true
+      i_enable_ir: true
+      i_floodlight_brightness: 100
+      i_laser_dot_brightness: 800
+      i_pipeline_type: RGBD
+      i_nn_type: spatial  # Tells the camera to run the neural network natively
+      i_usb_speed: SUPER
+    rgb:
+      i_board_socket_id: 0
+      i_fps: 10.0
+      i_interleaved: false
+      i_max_q_size: 10
+      i_preview_width: 320
+      i_preview_height: 240
+      i_enable_preview: true
+      i_low_bandwidth: true
+      i_keep_preview_aspect_ratio: true
+      i_publish_topic: true
+      i_resolution: '1080P'
+    stereo:
+      i_publish_topic: true
+        # rgb:
+        #   image:
+        #     compressed:
+        #       format: png
+      i_width: 320
+      i_height: 240
+      i_fps: 10.0
+      i_align_depth: true      # 绝对关键！让深度图的视角强行对齐 RGB 镜头
+      i_enable_decimation_filter: true # 开启 VPU 硬件滤波，减轻树莓派 CPU 负担
+      # --- ADD THESE THREE LINES ---
+      i_extended_disp: true      # Increases max disparity from 96 to 191 (allows closer minimum depth)
+      i_subpixel: true           # Enable subpixel accuracy
+      i_lr_check: true           # Helps eliminate false-positive ghost depths
+    left:
+      i_fps: 10.0
+      i_publish_topic: true
+      i_resolution: '400P'
+    right:
+      i_fps: 10.0
+      i_publish_topic: true
+      i_resolution: '400P'
+    use_sim_time: false
+    nn:
+      # This path assumes the json file is installed to the package share directory. 
+      # You may need to provide the absolute path if not launching via a launch file that resolves the share directory.
+      i_nn_config_path: "yolov8.json"

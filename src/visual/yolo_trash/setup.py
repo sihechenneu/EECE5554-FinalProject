@@ -11,7 +11,11 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/trash_detection_2d"]),
         ("share/trash_detection_2d", ["package.xml"]),
         (os.path.join("share", package_name, "launch"), glob("launch/*.py")),
+        (os.path.join("share", package_name, "config"), glob("config/*")),
     ],
+    package_data={
+        "yolo_trash": ["*.pt"],
+    },
     install_requires=["setuptools", "ultralytics"],
     entry_points={
         "console_scripts": [

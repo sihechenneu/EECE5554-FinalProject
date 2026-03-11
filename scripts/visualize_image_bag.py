@@ -1,63 +1,29 @@
 #!/usr/bin/env python3
 """
-Visualize any image topic from a ROS2 bag. Single-channel as heatmap; multi-channel as RGB or per-channel heatmap.
-Channel is chosen via --channel (0|1|2|all|auto).
+ROS2 node to visualize multiple image topics at once (RGB, grayscale, and stereo/depth). Use while playing a bag:
+  ros2 bag play <path>   # in another terminal
+  python visualize_rgb_topics.py --topics /oakd/left/image_raw /oakd/right/image_raw /oakd/rgb/image_raw /oakd/stereo/image_raw
 
-Usage:
-  python visualize_image_bag.py <path_to_bag> [--topic TOPIC] [--channel 0|1|2|all|auto]
-  python visualize_image_bag.py ./my_bag --topic /camera/rgb/image_raw --channel auto
+Stereo topic (/oakd/stereo/image_raw): 16-bit depth is shown as JET colormap (clipped 0--stereo-max-depth mm);
+8-bit is shown as grayscale. Same method as oakd_visualizer.py.
 
-Controls: [Space] pause | [A]/[D] or arrows step | [Q] quit
-Requirements: rosbag2_py, sensor_msgs, numpy, opencv-python, matplotlib (for colormaps)
+Displays all topics in a single window (grid). Press [Q] to quit.
+Requirements: rclpy, sensor_msgs, numpy, opencv-python
 """
 
 import argparse
 import sys
-import time
-from pathlib import Path
 
 import numpy as np
 import cv2
 
 
-def get_reader_and_types(bag_path: str):
-    """Open rosbag2 and return reader plus topic name -> type name mapping."""
-    try:
-        import rosbag2_py
-    except ImportError:
-        print("rosbag2_py not found. Do BOTH of the following:", file=sys.stderr)
-        print("  1. Source ROS 2: source /opt/ros/jazzy/setup.bash", file=sys.stderr)
-        print("  2. Install: sudo apt install ros-jazzy-rosbag2-py", file=sys.stderr)
-        sys.exit(1)
-
-    bag_path = Path(bag_path)
-    if not bag_path.exists():
-        print(f"Bag path does not exist: {bag_path}", file=sys.stderr)
-        sys.exit(1)
-    uri = str(bag_path.resolve())
-    storage_options = rosbag2_py.StorageOptions(uri=uri, storage_id="")
-    converter_options = rosbag2_py.ConverterOptions(
-        input_serialization_format="",
-        output_serialization_format="",
-    )
-    reader = rosbag2_py.SequentialReader()
-    reader.open(storage_options, converter_options)
-    topic_types = {}
-    try:
-        for topic_info in reader.get_all_topics_and_types():
-            name = getattr(topic_info, "name", None)
-            typ = getattr(topic_info, "type", "sensor_msgs/msg/Image")
-            if name is not None:
-                topic_types[name] = typ
-    except Exception:
-        pass
-    return reader, topic_types
-
-
-def image_msg_to_array(msg):
-    """
-    Convert sensor_msgs/Image to (array, num_channels, is_float).
-    array: (H, W) or (H, W, C); float32 for depth-like, uint8 for 8-bit.
+def image_msg_to_bgr(msg, topic: str = "", rgb_topic_as_rgb: bool = False, stereo_max_depth_mm: float = 2000.0):
+    """Convert sensor_msgs/Image to BGR numpy array for display. Returns None if unsupported.
+    - Grayscale (left/right): MONO8 -> BGR grayscale.
+    - RGB topic: by default treated as BGR; use rgb_topic_as_rgb=True if red/blue swapped.
+    - Stereo topic (name contains 'stereo'): 16-bit depth -> clip to stereo_max_depth_mm, scale, JET colormap;
+      8-bit -> grayscale. Same as oakd_visualizer.py.
     """
     try:
         from sensor_msgs.msg import Image
@@ -65,272 +31,254 @@ def image_msg_to_array(msg):
         print("Source ROS2: source /opt/ros/jazzy/setup.bash", file=sys.stderr)
         sys.exit(1)
     if not isinstance(msg, Image):
-        return None, 0, False
+        return None
     h, w = msg.height, msg.width
     enc = msg.encoding.upper().replace(" ", "")
+    is_stereo_topic = "stereo" in topic.lower()
+
     if enc in ("8UC1", "8U_C1", "MONO8"):
         arr = np.frombuffer(msg.data, dtype=np.uint8).reshape(h, w)
-        return arr, 1, False
+        return cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
+
+    if enc in ("16UC1", "16U_C1"):
+        arr = np.frombuffer(msg.data, dtype=np.uint16).reshape(h, w)
+        arr = np.clip(arr, 0, int(stereo_max_depth_mm))
+        arr_8u = np.uint8((arr.astype(np.float32) / float(stereo_max_depth_mm)) * 255.0)
+        return cv2.applyColorMap(arr_8u, cv2.COLORMAP_JET)
+
+    if enc in ("32FC1", "TYPE_32FC1"):
+        # Dynamic normalization for floating point depth (like DepthAnythingV2)
+        arr = np.frombuffer(msg.data, dtype=np.float32).reshape(h, w)
+        valid = arr[arr > 0]
+        if len(valid) > 0:
+            min_val = np.min(valid)
+            max_val = np.max(valid)
+            if max_val > min_val:
+                arr_8u = np.uint8(255.0 * (arr - min_val) / (max_val - min_val))
+            else:
+                arr_8u = np.zeros_like(arr, dtype=np.uint8)
+        else:
+            arr_8u = np.zeros_like(arr, dtype=np.uint8)
+        return cv2.applyColorMap(arr_8u, cv2.COLORMAP_JET)
+
     if enc in ("8UC3", "8U_C3", "RGB8", "BGR8"):
         arr = np.frombuffer(msg.data, dtype=np.uint8).reshape(h, w, 3)
-        if "BGR" in msg.encoding:
-            arr = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
-        return arr, 3, False
-    if enc in ("16UC1", "16U_C1"):
-        arr = np.frombuffer(msg.data, dtype=np.uint16).reshape(h, w).astype(np.float32)
-        return arr, 1, True
-    if enc in ("32FC1", "32F_C1"):
-        arr = np.frombuffer(msg.data, dtype=np.float32).reshape(h, w).copy()
-        return arr, 1, True
-    return None, 0, False
+        is_rgb_topic = "rgb" in topic.lower()
+        if is_rgb_topic:
+            if rgb_topic_as_rgb:
+                arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        elif "BGR" not in msg.encoding:
+            arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        return arr
+    return None
 
 
-def channel_to_heatmap(ch: np.ndarray, min_val: float, max_val: float, colormap_name: str = "turbo", add_legend: bool = True) -> np.ndarray:
-    """Map single-channel float/uint to BGR heatmap with optional legend strip."""
-    ch = np.asarray(ch, dtype=np.float64)
-    valid = np.isfinite(ch)
-    if not np.any(valid):
-        out = np.zeros((*ch.shape, 3), dtype=np.uint8)
-        if add_legend:
-            out = _add_legend_strip(out, min_val, max_val, colormap_name)
-        return out
-    out = np.zeros((*ch.shape, 3), dtype=np.uint8)
-    normalized = np.clip((ch - min_val) / (max_val - min_val) if max_val > min_val else np.zeros_like(ch), 0, 1)
-    normalized[~valid] = 0
-    try:
-        import matplotlib.pyplot as plt
-        cmap = plt.get_cmap(colormap_name)
-    except Exception:
-        cmap = None
-    if cmap is not None:
-        rgba = (cmap(normalized) * 255).astype(np.uint8)[:, :, :3]
-        out = cv2.cvtColor(rgba, cv2.COLOR_RGB2BGR)
-    else:
-        gray = (normalized * 255).astype(np.uint8)
-        out = cv2.applyColorMap(gray, cv2.COLORMAP_TURBO)
-    if add_legend:
-        out = _add_legend_strip(out, min_val, max_val, colormap_name)
-    return out
-
-
-def _add_legend_strip(img: np.ndarray, min_val: float, max_val: float, colormap_name: str, strip_height: int = 24) -> np.ndarray:
-    h, w = img.shape[:2]
-    try:
-        import matplotlib.pyplot as plt
-        cmap = plt.get_cmap(colormap_name)
-    except Exception:
-        cmap = None
-    if cmap is None:
-        bar_bgr = np.tile(np.linspace(0, 255, w).astype(np.uint8).reshape(1, -1), (strip_height, 1))
-        bar_bgr = cv2.applyColorMap(bar_bgr, cv2.COLORMAP_TURBO)
-    else:
-        x = np.linspace(0, 1, w)
-        rgba = (cmap(x) * 255).astype(np.uint8)[:, :3]
-        bar_rgb = rgba[np.newaxis, :, :]
-        bar_bgr = cv2.cvtColor(bar_rgb, cv2.COLOR_RGB2BGR)
-        strip = np.repeat(bar_bgr, strip_height, axis=0)
-        bar_bgr = strip
-    out = np.vstack([img, bar_bgr])
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(out, f"{min_val:.2g}", (4, h + strip_height - 6), font, 0.4, (255, 255, 255), 1)
-    cv2.putText(out, f"{max_val:.2g}", (w - 50, h + strip_height - 6), font, 0.4, (255, 255, 255), 1)
-    return out
-
-
-IMAGE_TOPIC_KEYWORDS = ("rgb", "left", "right", "stereo")
-
-
-def _is_compressed_topic(topic_name: str, type_str: str) -> bool:
-    """CompressedImage types / compressed-named topics cannot be deserialized as Image; skip them."""
-    return "CompressedImage" in (type_str or "") or "compressed" in (topic_name or "").lower()
-
-
-def get_image_topic_candidates(topic_types: dict) -> list:
-    """Return list of uncompressed Image topic names (no CompressedImage)."""
-    return [
-        t for t, typ in topic_types.items()
-        if "Image" in typ and not _is_compressed_topic(t, typ)
-    ]
-
-
-def find_image_topic(topic_types: dict, hint: str) -> str:
-    image_topics = get_image_topic_candidates(topic_types)
-    if (hint or "").strip():
-        if hint in topic_types and not _is_compressed_topic(hint, topic_types.get(hint, "")):
-            return hint
-        for t in topic_types:
-            if hint in t and not _is_compressed_topic(t, topic_types.get(t, "")):
-                return t
-    for kw in IMAGE_TOPIC_KEYWORDS:
-        for t in image_topics:
-            if kw in t.lower():
-                return t
-    return image_topics[0] if image_topics else ""
-
-
-def prompt_choose_topic(candidates: list) -> str:
-    """Prompt user to choose a topic by number or by full name. Returns chosen topic name."""
-    if not candidates:
-        return ""
-    if len(candidates) == 1:
-        print(f"Only one image topic: {candidates[0]}")
-        return candidates[0]
-    print("Image topics (compressed excluded):")
-    for i, name in enumerate(candidates, 1):
-        print(f"  {i}. {name}")
-    while True:
-        try:
-            raw = input("Choose topic (number or full name): ").strip()
-            if not raw:
-                print("Enter a number or topic name.", file=sys.stderr)
-                continue
-            # Try as number first
-            n = int(raw)
-            if 1 <= n <= len(candidates):
-                return candidates[n - 1]
-            print(f"Enter a number between 1 and {len(candidates)}.", file=sys.stderr)
-        except ValueError:
-            # Treat as topic name (full or partial)
-            for t in candidates:
-                if raw == t or raw in t:
-                    return t
-            print(f"No topic matching '{raw}'. Choose from the list above.", file=sys.stderr)
+def short_name(topic: str, max_len: int = 28) -> str:
+    """Shorten topic for overlay label (e.g. /oakd/left/image_raw -> left/image_raw)."""
+    if len(topic) <= max_len:
+        return topic
+    parts = topic.rsplit("/", 2)
+    if len(parts) >= 2:
+        return parts[-2] + "/" + parts[-1]
+    return topic[-max_len:]
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Visualize any image topic from a ROS2 bag.")
-    parser.add_argument("bag_path", type=str, help="Path to the ROS2 bag")
-    parser.add_argument("--topic", "-t", type=str, default=None, help="Image topic (if not set, prompt to choose)")
-    parser.add_argument("--channel", type=str, default="auto",
-                        help="Channel to show: 0, 1, 2, 'all', or 'auto' (single->heatmap, multi->all)")
-    parser.add_argument("--min-val", type=float, default=0.0, help="Min value for heatmap (single-channel)")
-    parser.add_argument("--max-val", type=float, default=5.0, help="Max value for heatmap (e.g. depth in m)")
-    parser.add_argument("--colormap", "-c", type=str, default="turbo")
-    parser.add_argument("--max-frames", type=int, default=0, help="Max frames to load (0 = all)")
-    parser.add_argument("--fps", type=float, default=30.0, help="Playback fps when not paused")
+    parser = argparse.ArgumentParser(description="Visualize multiple RGB image topics at once (e.g. while playing a bag).")
+    parser.add_argument("--topics", "-t", type=str, nargs="+", required=True,
+                        help="Image topics, e.g. /oakd/left/image_raw /oakd/right/image_raw /oakd/rgb/image_raw")
+    parser.add_argument("--max-size", type=int, default=400, help="Max width/height per cell (default 400)")
+    parser.add_argument("--rgb-as-rgb", action="store_true",
+                        help="Treat the rgb topic as RGB (convert to BGR for display). Use if rgb still has red/blue swapped.")
+    parser.add_argument("--stereo-max-depth", type=float, default=2000.0,
+                        help="For stereo topic: max depth in mm for colormap (default 2000). Clipped above this.")
+    parser.add_argument("--yolo-topic", type=str, default="",
+                        help="Optional. Topic name for yolov8_msgs/Yolov8Inference to draw bounding boxes.")
     args = parser.parse_args()
 
-    import rosbag2_py
-    from rclpy.serialization import deserialize_message
-    from sensor_msgs.msg import Image
-
-    reader, topic_types = get_reader_and_types(args.bag_path)
-    candidates = get_image_topic_candidates(topic_types)
-    if not candidates:
-        print("No Image topic found (compressed excluded). Available:", list(topic_types.keys()), file=sys.stderr)
-        print("Use --topic /your/image_topic if the topic type is different.", file=sys.stderr)
+    try:
+        import rclpy
+        from rclpy.node import Node
+        from sensor_msgs.msg import Image
+    except ImportError:
+        print("rclpy not found. Source ROS2: source /opt/ros/jazzy/setup.bash", file=sys.stderr)
         sys.exit(1)
 
-    if (args.topic or "").strip():
-        hint = (args.topic or "").strip()
-        if hint in candidates:
-            image_topic = hint
-        else:
-            match = [t for t in candidates if hint in t]
-            image_topic = match[0] if len(match) == 1 else (match[0] if match else "")
-        if not image_topic:
-            print(f"No image topic matching '{hint}'. Choose from: {candidates}", file=sys.stderr)
+    topics = [t.strip() for t in args.topics if t.strip()]
+    if not topics:
+        print("Provide at least one topic via --topics.", file=sys.stderr)
+        sys.exit(1)
+
+    # latest[topic] = (bgr_array, timestamp_ns)
+    latest = {t: None for t in topics}
+    latest_yolo = None
+    rgb_as_rgb = getattr(args, "rgb_as_rgb", False)
+    stereo_max_depth_mm = getattr(args, "stereo_max_depth", 2000.0)
+    yolo_topic = getattr(args, "yolo_topic", "")
+    
+    YoloMsgClass = None
+    if yolo_topic:
+        try:
+            from yolov8_msgs.msg import Yolov8Inference
+            YoloMsgClass = Yolov8Inference
+        except ImportError:
+            pass
+
+        try:
+            from vision_msgs.msg import Detection3DArray
+            YoloMsgClass3D = Detection3DArray
+            if YoloMsgClass is None or "spatial" in yolo_topic.lower() or "vision" in yolo_topic.lower():
+                YoloMsgClass = YoloMsgClass3D
+        except ImportError:
+            pass
+
+        if YoloMsgClass is None:
+            print("Message types for yolo_topic not found. Make sure vision_msgs is installed.", file=sys.stderr)
             sys.exit(1)
-        print(f"Topic: {image_topic}")
-    else:
-        image_topic = prompt_choose_topic(candidates)
-        if not image_topic:
-            sys.exit(1)
-        print(f"Topic: {image_topic}")
+
+    class MultiImageSubscriber(Node):
+        def __init__(self):
+            super().__init__("visualize_rgb_topics_node")
+            for topic in topics:
+                self.create_subscription(Image, topic, lambda msg, t=topic: self.callback(msg, t), 1)
+            
+            if yolo_topic:
+                self.create_subscription(YoloMsgClass, yolo_topic, self.yolo_callback, 1)
+
+        def yolo_callback(self, msg):
+            nonlocal latest_yolo
+            latest_yolo = msg
+
+        def callback(self, msg, topic):
+            bgr = image_msg_to_bgr(msg, topic, rgb_topic_as_rgb=rgb_as_rgb, stereo_max_depth_mm=stereo_max_depth_mm)
+            if bgr is not None:
+                stamp = getattr(msg.header, "stamp", None)
+                ns = 0
+                if stamp is not None:
+                    ns = getattr(stamp, "sec", 0) * 10**9 + getattr(stamp, "nanosec", 0)
+                latest[topic] = (bgr, ns)
+
+    rclpy.init()
+    node = MultiImageSubscriber()
+    print(f"Subscribed to {len(topics)} topic(s). Play the bag: ros2 bag play <path>")
+    print("Press [Q] to quit.")
+
+    max_side = args.max_size
+    win_name = "RGB topics [Q] quit"
 
     try:
-        reader.set_filter(rosbag2_py.StorageFilter(topics=[image_topic]))
-    except Exception:
-        pass
+        while rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=0.03)
+            ready = [t for t in topics if latest[t] is not None]
+            if not ready:
+                key = cv2.waitKey(50)
+                if key != -1 and (key & 0xFF) == ord("q"):
+                    break
+                continue
 
-    frames = []
-    failed_indices = []
-    msg_index = -1
-    while reader.has_next():
-        rec = reader.read_next()
-        if rec[0] != image_topic:
-            continue
-        msg_index += 1
-        try:
-            msg = deserialize_message(rec[1], Image)
-        except Exception as e:
-            failed_indices.append(msg_index)
-            if len(failed_indices) <= 5:
-                print(f"Warning: skipped message index {msg_index} (deserialize failed): {e}", file=sys.stderr)
-            continue
-        arr, num_ch, is_float = image_msg_to_array(msg)
-        if arr is None:
-            continue
-        frames.append((arr, num_ch, is_float))
-        if args.max_frames and len(frames) >= args.max_frames:
-            break
-    if failed_indices:
-        if len(failed_indices) <= 20:
-            print(f"Deserialization failed for message indices on '{image_topic}': {failed_indices}", file=sys.stderr)
-        else:
-            print(f"Deserialization failed for {len(failed_indices)} messages (indices: {failed_indices[:15]} ... {failed_indices[-3:]})", file=sys.stderr)
+            cell_size = max_side
+            cells = []
+            for topic in topics:
+                if latest[topic] is None:
+                    cells.append(np.zeros((cell_size, cell_size, 3), dtype=np.uint8))
+                    continue
+                bgr_orig, _ = latest[topic]
+                bgr = bgr_orig.copy()
+                
+                # Draw YOLO bounding boxes on the original resolution before resize
+                if yolo_topic and latest_yolo is not None:
+                    if hasattr(latest_yolo, 'yolov8_inference'):
+                        for det in latest_yolo.yolov8_inference:
+                            x1, y1, x2, y2 = map(int, det.coordinates)
+                            cv2.rectangle(bgr, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                            cv2.putText(bgr, det.class_name, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    elif hasattr(latest_yolo, 'detections'):
+                        for det in latest_yolo.detections:
+                            class_id = ""
+                            if len(det.results) > 0:
+                                class_id = getattr(det.results[0].hypothesis, 'class_id', "")
+                                if not class_id and hasattr(det.results[0], 'id'):
+                                    class_id = str(det.results[0].id)
+                            
+                            cx = det.bbox.center.position.x
+                            cy = det.bbox.center.position.y
+                            sx = det.bbox.size.x if hasattr(det.bbox, 'size') else det.bbox.size_x
+                            sy = det.bbox.size.y if hasattr(det.bbox, 'size') else det.bbox.size_y
+                            
+                            x1 = cx - sx / 2
+                            y1 = cy - sy / 2
+                            x2 = cx + sx / 2
+                            y2 = cy + sy / 2
+                            
+                            h_img, w_img = bgr.shape[:2]
+                            if sx <= 1.05 and sy <= 1.05 and cx <= 1.05 and cy <= 1.05:
+                                x1 *= w_img
+                                y1 *= h_img
+                                x2 *= w_img
+                                y2 *= h_img
+                            else:
+                                # Fix Geometry Miscalculation:
+                                # The VPU publishes boxes in the stretched square NN space (e.g., 320x320).
+                                # The source image is rectangular (e.g., 320w x 240h).
+                                # To map it perfectly back, we un-stretch the coordinates!
+                                # Assuming the width is 1:1 (320 -> 320), the NN scale is the image width.
+                                nn_scale = max(w_img, h_img) 
+                                x1 = (x1 / nn_scale) * w_img
+                                x2 = (x2 / nn_scale) * w_img
+                                y1 = (y1 / nn_scale) * h_img
+                                y2 = (y2 / nn_scale) * h_img
+                            
+                            x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
 
-    if not frames:
-        print("No image messages found on that topic.", file=sys.stderr)
-        sys.exit(1)
-    print(f"Loaded {len(frames)} frames. [Space] pause | [A]/[D] step | [Q] quit")
+                            cv2.rectangle(bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                            
+                            if len(det.results) > 0 and hasattr(det.results[0], 'pose'):
+                                pos = det.results[0].pose.pose.position
+                                
+                                # Attempt to parse debug info from depth_anything_v2 script
+                                parts = class_id.split('|')
+                                display_name = parts[0]
+                                
+                                if abs(pos.z) > 0.001:
+                                    dist_str = f"{display_name} [{pos.z:.2f}m]"
+                                    cv2.putText(bgr, dist_str, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                                    
+                                    if len(parts) >= 4:
+                                        ai, st, scale = parts[1], parts[2], parts[3]
+                                        debug_str = f"DA2:{ai} ST:{st} S:{scale}"
+                                        cv2.putText(bgr, debug_str, (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 100, 100), 2)
+                                    if len(parts) == 5:
+                                        bad_pct = parts[4]
+                                        bad_color = (0, 0, 255) if int(bad_pct) > 30 else (0, 255, 0)
+                                        cv2.putText(bgr, f"Bad ST: {bad_pct}%", (x1, y2 + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.45, bad_color, 2)
+                                else:
+                                    cv2.putText(bgr, display_name, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                            else:
+                                cv2.putText(bgr, class_id, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                        
+                h, w = bgr.shape[:2]
+                if max(h, w) > cell_size:
+                    scale = cell_size / max(h, w)
+                    bgr = cv2.resize(bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+                    h, w = bgr.shape[:2]
+                # Pad to cell_size x cell_size (center)
+                pad_h = (cell_size - h) // 2
+                pad_w = (cell_size - w) // 2
+                padded = np.zeros((cell_size, cell_size, 3), dtype=np.uint8)
+                padded[pad_h : pad_h + h, pad_w : pad_w + w] = bgr
+                label = short_name(topic)
+                cv2.putText(padded, label, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                cells.append(padded)
 
-    _, num_ch, _ = frames[0]
-    channel_mode = args.channel.lower()
-    if channel_mode == "auto":
-        channel_mode = "all" if num_ch >= 3 else "0"
-    use_heatmap = (num_ch == 1) or (channel_mode in ("0", "1", "2") and num_ch >= 3)
-    channel_idx = 0
-    if channel_mode in ("0", "1", "2"):
-        channel_idx = int(channel_mode)
-
-    frame_interval = 1.0 / args.fps if args.fps > 0 else 1.0 / 30.0
-    idx = 0
-    paused = False
-    last_frame_time = time.monotonic()
-    win_name = "Image (Space=pause, A/D=step, Q=quit)"
-
-    while True:
-        arr, num_ch, is_float = frames[idx]
-
-        if use_heatmap:
-            if num_ch >= 3:
-                ch = arr[:, :, channel_idx].astype(np.float64)
-            else:
-                ch = arr.astype(np.float64) if is_float else arr.astype(np.float64)
-            display = channel_to_heatmap(ch, args.min_val, args.max_val, args.colormap)
-        else:
-            display = arr if arr.ndim == 3 else cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
-            if display.dtype != np.uint8:
-                display = (np.clip(display, 0, 1) * 255).astype(np.uint8)
-
-        h, w = display.shape[:2]
-        if max(h, w) > 1200:
-            scale = 1200 / max(h, w)
-            display = cv2.resize(display, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-        status = f"Frame {idx+1}/{len(frames)}" + (" [PAUSED]" if paused else "")
-        cv2.putText(display, status, (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.imshow(win_name, display)
-
-        key = cv2.waitKey(1)
-        if key != -1:
-            key = key & 0xFF
-            if key == ord("q"):
+            row = np.hstack(cells)
+            cv2.imshow(win_name, row)
+            key = cv2.waitKey(1)
+            if key != -1 and (key & 0xFF) == ord("q"):
                 break
-            if key == ord(" "):
-                paused = not paused
-            if key == ord("a") or key == 81 or key == 2:
-                idx = max(0, idx - 1)
-            if key == ord("d") or key == 83 or key == 3:
-                idx = min(len(frames) - 1, idx + 1)
-
-        if not paused:
-            now = time.monotonic()
-            if now - last_frame_time >= frame_interval:
-                idx = (idx + 1) % len(frames)
-                last_frame_time = now
-
-    cv2.destroyAllWindows()
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        cv2.destroyAllWindows()
     print("Done.")
 
 
