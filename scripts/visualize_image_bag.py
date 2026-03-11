@@ -40,10 +40,25 @@ def image_msg_to_bgr(msg, topic: str = "", rgb_topic_as_rgb: bool = False, stere
         arr = np.frombuffer(msg.data, dtype=np.uint8).reshape(h, w)
         return cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
 
-    if enc in ("16UC1", "16U_C1") and is_stereo_topic:
+    if enc in ("16UC1", "16U_C1"):
         arr = np.frombuffer(msg.data, dtype=np.uint16).reshape(h, w)
         arr = np.clip(arr, 0, int(stereo_max_depth_mm))
         arr_8u = np.uint8((arr.astype(np.float32) / float(stereo_max_depth_mm)) * 255.0)
+        return cv2.applyColorMap(arr_8u, cv2.COLORMAP_JET)
+
+    if enc in ("32FC1", "TYPE_32FC1"):
+        # Dynamic normalization for floating point depth (like DepthAnythingV2)
+        arr = np.frombuffer(msg.data, dtype=np.float32).reshape(h, w)
+        valid = arr[arr > 0]
+        if len(valid) > 0:
+            min_val = np.min(valid)
+            max_val = np.max(valid)
+            if max_val > min_val:
+                arr_8u = np.uint8(255.0 * (arr - min_val) / (max_val - min_val))
+            else:
+                arr_8u = np.zeros_like(arr, dtype=np.uint8)
+        else:
+            arr_8u = np.zeros_like(arr, dtype=np.uint8)
         return cv2.applyColorMap(arr_8u, cv2.COLORMAP_JET)
 
     if enc in ("8UC3", "8U_C3", "RGB8", "BGR8"):
@@ -187,8 +202,8 @@ def main():
                             
                             cx = det.bbox.center.position.x
                             cy = det.bbox.center.position.y
-                            sx = det.bbox.size.x
-                            sy = det.bbox.size.y
+                            sx = det.bbox.size.x if hasattr(det.bbox, 'size') else det.bbox.size_x
+                            sy = det.bbox.size.y if hasattr(det.bbox, 'size') else det.bbox.size_y
                             
                             x1 = cx - sx / 2
                             y1 = cy - sy / 2
@@ -216,7 +231,30 @@ def main():
                             x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
 
                             cv2.rectangle(bgr, (x1, y1), (x2, y2), (0, 255, 255), 2)
-                            cv2.putText(bgr, class_id, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                            
+                            if len(det.results) > 0 and hasattr(det.results[0], 'pose'):
+                                pos = det.results[0].pose.pose.position
+                                
+                                # Attempt to parse debug info from depth_anything_v2 script
+                                parts = class_id.split('|')
+                                display_name = parts[0]
+                                
+                                if abs(pos.z) > 0.001:
+                                    dist_str = f"{display_name} [{pos.z:.2f}m]"
+                                    cv2.putText(bgr, dist_str, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                                    
+                                    if len(parts) >= 4:
+                                        ai, st, scale = parts[1], parts[2], parts[3]
+                                        debug_str = f"DA2:{ai} ST:{st} S:{scale}"
+                                        cv2.putText(bgr, debug_str, (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 100, 100), 2)
+                                    if len(parts) == 5:
+                                        bad_pct = parts[4]
+                                        bad_color = (0, 0, 255) if int(bad_pct) > 30 else (0, 255, 0)
+                                        cv2.putText(bgr, f"Bad ST: {bad_pct}%", (x1, y2 + 35), cv2.FONT_HERSHEY_SIMPLEX, 0.45, bad_color, 2)
+                                else:
+                                    cv2.putText(bgr, display_name, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                            else:
+                                cv2.putText(bgr, class_id, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                         
                 h, w = bgr.shape[:2]
                 if max(h, w) > cell_size:
