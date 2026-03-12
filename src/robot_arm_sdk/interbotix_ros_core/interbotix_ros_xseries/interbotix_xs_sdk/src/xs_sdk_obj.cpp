@@ -63,6 +63,8 @@ void InterbotixRobotXS::robot_set_operating_modes(std::string const& cmd_type, s
       robot_set_joint_operating_mode(joint_name, mode, profile_type, profile_velocity, profile_acceleration);
     group_map[name].mode = mode;
     group_map[name].profile_type = profile_type;
+    group_map[name].profile_velocity = profile_velocity;
+    group_map[name].profile_acceleration = profile_acceleration;
     RCLCPP_INFO(node_->get_logger(),"[xs_sdk] The operating mode for the '%s' group was changed to %s.", name.c_str(), mode.c_str());
   }
   else if (cmd_type == "single" && motor_map.count(name) > 0)
@@ -151,6 +153,8 @@ void InterbotixRobotXS::robot_set_joint_operating_mode(std::string const& name, 
     }
     motor_map[motor_name].mode = mode;
     motor_map[motor_name].profile_type = profile_type;
+    motor_map[motor_name].profile_velocity = profile_velocity;
+    motor_map[motor_name].profile_acceleration = profile_acceleration;
   }
 
   for (auto const& joint_name:sister_map[name])
@@ -226,6 +230,13 @@ void InterbotixRobotXS::robot_reboot_motors(std::string const& cmd_type, std::st
 
   for (auto const& joint_name:joints_to_torque)
   {
+    // Restore operating mode (including Profile_Velocity/Acceleration) that was wiped by the hardware reboot
+    robot_set_joint_operating_mode(
+      joint_name,
+      motor_map[joint_name].mode,
+      motor_map[joint_name].profile_type,
+      motor_map[joint_name].profile_velocity,
+      motor_map[joint_name].profile_acceleration);
     for (auto const& name:sister_map[joint_name])
       robot_torque_enable("single", name, true);
   }

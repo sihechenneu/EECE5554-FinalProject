@@ -39,6 +39,8 @@ struct JointGroup
   uint8_t joint_num;
   std::string mode;
   std::string profile_type;
+  int32_t profile_velocity;
+  int32_t profile_acceleration;
 };
 
 struct MotorState
@@ -46,6 +48,8 @@ struct MotorState
   uint8_t motor_id;
   std::string mode;
   std::string profile_type;
+  int32_t profile_velocity;
+  int32_t profile_acceleration;
 };
 
 struct Gripper
