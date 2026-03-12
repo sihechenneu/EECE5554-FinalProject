@@ -110,13 +110,13 @@
     }
 
     .arrow-btn {
-      width: 40px;
+      min-width: 80px;
       height: 40px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      font-size: 1.25rem;
-      font-weight: 700;
+      font-size: 0.9rem;
+      font-weight: 600;
       line-height: 1;
       padding: 0;
       border-radius: var(--radius);
@@ -448,8 +448,17 @@
         const btnMinus = document.createElement('button');
         btnMinus.type = 'button';
         btnMinus.className = 'arrow-btn';
-        btnMinus.innerHTML = '−';
-        btnMinus.title = 'Decrease ' + name;
+        // Customize button labels per joint
+        if (name === 'waist') {
+          btnMinus.textContent = 'Right';
+          btnMinus.title = 'Rotate waist to the right';
+        } else if (name === 'shoulder' || name === 'elbow' || name === 'wrist_angle') {
+          btnMinus.textContent = 'Higher';
+          btnMinus.title = 'Move ' + name + ' higher';
+        } else {
+          btnMinus.textContent = '−';
+          btnMinus.title = 'Decrease ' + name;
+        }
         const valueSpan = document.createElement('span');
         valueSpan.className = 'joint-value';
         valueSpan.dataset.joint = name;
@@ -457,8 +466,16 @@
         const btnPlus = document.createElement('button');
         btnPlus.type = 'button';
         btnPlus.className = 'arrow-btn';
-        btnPlus.innerHTML = '+';
-        btnPlus.title = 'Increase ' + name;
+        if (name === 'waist') {
+          btnPlus.textContent = 'Left';
+          btnPlus.title = 'Rotate waist to the left';
+        } else if (name === 'shoulder' || name === 'elbow' || name === 'wrist_angle') {
+          btnPlus.textContent = 'Lower';
+          btnPlus.title = 'Move ' + name + ' lower';
+        } else {
+          btnPlus.textContent = '+';
+          btnPlus.title = 'Increase ' + name;
+        }
         const initialVal = (low + high) / 2;
         jointValues[name] = initialVal;
         valueSpan.textContent = initialVal.toFixed(3);
