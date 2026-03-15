@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>oakd_bringup</name>
+  <version>0.0.1</version>
+  <description>OAK-D camera bringup with on-device YOLO (VPU)</description>
+  <license>BSD</license>
+
+  <buildtool_depend>ament_cmake_python</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>depthai_ros_driver</depend>
+
+  <export><build_type>ament_python</build_type></export>
+</package>
